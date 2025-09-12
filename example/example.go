@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -131,10 +132,40 @@ func main() {
 	log.Printf("等待数据生效...")
 	time.Sleep(5 * time.Second)
 
+	// 查询所有数据
+	log.Printf("开始查询所有数据...")
+	allResults, err := cli.Query(ctx, collectionName, nil, "age > 0", []string{"name", "age", "vector"})
+	if err != nil {
+		log.Fatalf("❌ 查询数据失败: %v", err)
+	}
+	log.Printf("✅ 查询完成")
+
+	// 打印所有数据
+	log.Printf("所有数据:")
+	for _, col := range allResults {
+		switch col.Name() {
+		case "name":
+			if nameCol, ok := col.(*entity.ColumnVarChar); ok {
+				log.Printf("  名字: %v", nameCol.Data())
+			}
+		case "age":
+			if ageCol, ok := col.(*entity.ColumnInt64); ok {
+				log.Printf("  年龄: %v", ageCol.Data())
+			}
+		case "vector":
+			if vecCol, ok := col.(*entity.ColumnFloatVector); ok {
+				log.Printf("  向量数据:")
+				for i, vec := range vecCol.Data() {
+					log.Printf("    向量 %d: [%v]", i, formatVector(vec))
+				}
+			}
+		}
+	}
+
 	// 搜索数据
-	log.Printf("开始搜索数据...")
+	log.Printf("\n开始相似度搜索...")
 	searchVectors := []entity.Vector{
-		entity.FloatVector(vectors[0]),
+		entity.FloatVector(vectors[0]), // 使用第一个向量进行搜索
 	}
 
 	searchParams, err := entity.NewIndexIvfFlatSearchParam(10)
@@ -146,7 +177,7 @@ func main() {
 		collectionName,
 		nil,
 		"",
-		[]string{"name", "age"},
+		[]string{"name", "age", "vector"},
 		searchVectors,
 		"vector",
 		entity.L2,
@@ -160,18 +191,43 @@ func main() {
 
 	// 打印搜索结果
 	for i, result := range results {
-		log.Printf("查询 %d 的搜索结果:", i)
+		log.Printf("\n查询向量 %d 的搜索结果:", i)
+		log.Printf("  查询向量: [%v]", formatVector(vectors[0]))
 		if ids, ok := result.IDs.(*entity.ColumnInt64); ok {
 			for j, id := range ids.Data() {
-				log.Printf("  ID: %v, 距离: %v", id, result.Scores[j])
+				log.Printf("  匹配结果 %d:", j+1)
+				log.Printf("    ID: %v", id)
+				log.Printf("    距离: %v", result.Scores[j])
+				// 查询匹配向量的详细信息
+				matchResults, err := cli.Query(ctx, collectionName, nil, fmt.Sprintf("id == %d", id), []string{"name", "age", "vector"})
+				if err != nil {
+					log.Printf("    ❌ 查询匹配向量详情失败: %v", err)
+					continue
+				}
+				for _, col := range matchResults {
+					switch col.Name() {
+					case "name":
+						if nameCol, ok := col.(*entity.ColumnVarChar); ok && len(nameCol.Data()) > 0 {
+							log.Printf("    名字: %v", nameCol.Data()[0])
+						}
+					case "age":
+						if ageCol, ok := col.(*entity.ColumnInt64); ok && len(ageCol.Data()) > 0 {
+							log.Printf("    年龄: %v", ageCol.Data()[0])
+						}
+					case "vector":
+						if vecCol, ok := col.(*entity.ColumnFloatVector); ok && len(vecCol.Data()) > 0 {
+							log.Printf("    向量: [%v]", formatVector(vecCol.Data()[0]))
+						}
+					}
+				}
 			}
 		}
 	}
 
-	// 查询数据
-	log.Printf("开始查询数据...")
+	// 条件查询
+	log.Printf("\n开始条件查询...")
 	expr := "age >= 25"
-	outputFields := []string{"name", "age"}
+	outputFields := []string{"name", "age", "vector"}
 	queryResults, err := cli.Query(ctx, collectionName, nil, expr, outputFields)
 	if err != nil {
 		log.Fatalf("❌ 查询数据失败: %v", err)
@@ -179,10 +235,36 @@ func main() {
 	log.Printf("✅ 查询完成")
 
 	// 打印查询结果
-	log.Printf("查询结果 (age >= 25):")
+	log.Printf("\n条件查询结果 (age >= 25):")
 	for _, col := range queryResults {
-		log.Printf("字段 %s: %v", col.Name(), col)
+		switch col.Name() {
+		case "name":
+			if nameCol, ok := col.(*entity.ColumnVarChar); ok {
+				log.Printf("  名字: %v", nameCol.Data())
+			}
+		case "age":
+			if ageCol, ok := col.(*entity.ColumnInt64); ok {
+				log.Printf("  年龄: %v", ageCol.Data())
+			}
+		case "vector":
+			if vecCol, ok := col.(*entity.ColumnFloatVector); ok {
+				log.Printf("  向量数据:")
+				for i, vec := range vecCol.Data() {
+					log.Printf("    向量 %d: [%v]", i, formatVector(vec))
+				}
+			}
+		}
 	}
 
-	log.Printf("✅ 所有测试完成")
+	log.Printf("\n✅ 所有测试完成")
+}
+
+// formatVector 格式化向量数据，只显示前5个和后5个元素
+func formatVector(vec []float32) string {
+	if len(vec) <= 10 {
+		return fmt.Sprintf("%v", vec)
+	}
+	prefix := vec[:5]
+	suffix := vec[len(vec)-5:]
+	return fmt.Sprintf("%v ... %v", prefix, suffix)
 }

@@ -15,7 +15,7 @@ Taurus Pro Milvus 是一个基于 [Milvus](https://milvus.io/) 向量数据库�
 ## 安装
 
 ```bash
-go get github.com/your-username/taurus-pro-milvus
+go get https://github.com/stones-hub/taurus-pro-milvus
 ```
 
 ## 快速开始
@@ -23,7 +23,7 @@ go get github.com/your-username/taurus-pro-milvus
 ### 1. 创建客户端
 
 ```go
-import "github.com/your-username/taurus-pro-milvus/pkg/milvus/client"
+import "github.com/stones-hub/taurus-pro-milvus/pkg/milvus/client"
 
 // 创建客户端
 cli, err := client.New(

@@ -13,6 +13,9 @@ import (
 
 // Client 定义 Milvus 客户端接口
 type Client interface {
+	// GetClient 获取 Milvus 客户端
+	GetClient() milvussdk.Client
+
 	// Collection 相关操作
 	CreateCollection(ctx context.Context, schema *entity.Schema, shardNum int32) error
 	DropCollection(ctx context.Context, collectionName string) error
@@ -814,4 +817,8 @@ func (c *client) Close() error {
 
 	c.closed = true
 	return c.cli.Close()
+}
+
+func (c *client) GetClient() milvussdk.Client {
+	return c.cli
 }

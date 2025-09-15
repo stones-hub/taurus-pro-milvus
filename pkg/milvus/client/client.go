@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	milvus "github.com/milvus-io/milvus-sdk-go/v2/client"
+	milvussdk "github.com/milvus-io/milvus-sdk-go/v2/client"
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
@@ -36,7 +36,7 @@ type Client interface {
 	// 数据操作
 	Insert(ctx context.Context, collectionName string, partitionName string, columns ...entity.Column) (entity.Column, error)
 	Delete(ctx context.Context, collectionName string, partitionName string, expr string) error
-	Search(ctx context.Context, collectionName string, partitionNames []string, expr string, outputFields []string, vectors []entity.Vector, vectorField string, metricType entity.MetricType, topK int, params entity.SearchParam) ([]milvus.SearchResult, error)
+	Search(ctx context.Context, collectionName string, partitionNames []string, expr string, outputFields []string, vectors []entity.Vector, vectorField string, metricType entity.MetricType, topK int, params entity.SearchParam) ([]milvussdk.SearchResult, error)
 	Query(ctx context.Context, collectionName string, partitionNames []string, expr string, outputFields []string) ([]entity.Column, error)
 
 	// 关闭连接
@@ -46,7 +46,7 @@ type Client interface {
 // client 实现 Client 接口
 type client struct {
 	opts   *Options
-	cli    milvus.Client
+	cli    milvussdk.Client
 	mu     sync.RWMutex
 	closed bool
 }
@@ -108,13 +108,13 @@ func New(opts ...Option) (Client, error) {
 	}
 
 	// 重试配置
-	retryLimit := &milvus.RetryRateLimitOption{
+	retryLimit := &milvussdk.RetryRateLimitOption{
 		MaxRetry:   options.MaxRetry,
 		MaxBackoff: options.MaxRetryBackoff,
 	}
 
 	// 转换为Milvus配置
-	config := milvus.Config{
+	config := milvussdk.Config{
 		Address:        options.Address,
 		Username:       options.Username,
 		Password:       options.Password,
@@ -127,7 +127,7 @@ func New(opts ...Option) (Client, error) {
 	}
 
 	// 创建Milvus客户端
-	cli, err := milvus.NewClient(context.Background(), config)
+	cli, err := milvussdk.NewClient(context.Background(), config)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create milvus client")
 	}
@@ -718,7 +718,7 @@ func (c *client) Delete(ctx context.Context, collectionName string, partitionNam
 //	    ids := result.IDs              // 匹配的ID
 //	    fields := result.Fields        // 返回的字段值
 //	}
-func (c *client) Search(ctx context.Context, collectionName string, partitionNames []string, expr string, outputFields []string, vectors []entity.Vector, vectorField string, metricType entity.MetricType, topK int, params entity.SearchParam) ([]milvus.SearchResult, error) {
+func (c *client) Search(ctx context.Context, collectionName string, partitionNames []string, expr string, outputFields []string, vectors []entity.Vector, vectorField string, metricType entity.MetricType, topK int, params entity.SearchParam) ([]milvussdk.SearchResult, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 

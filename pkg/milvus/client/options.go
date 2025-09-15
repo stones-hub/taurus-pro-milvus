@@ -1,41 +1,64 @@
 package client
 
 import (
+	"math"
 	"time"
 )
 
 // Options 定义Milvus客户端的配置选项
 type Options struct {
 	// 基础连接配置
-	Address       string // Milvus服务地址，格式：host:port，例如 "localhost:19530"
-	Username      string // 用户名，用于身份验证
-	Password      string // 密码，用于身份验证
-	APIKey        string // API密钥认证，与用户名/密码认证互斥，优先使用APIKey
-	DBName        string // 数据库名称，指定要连接的数据库，默认为default
-	Identifier    string // 连接标识符，用于区分不同的客户端连接，例如："client-1"或"search-service"
-	EnableTLSAuth bool   // 是否启用TLS安全传输，如果地址使用https://则自动启用
+	Address  string // Milvus服务地址，格式：host:port，例如 "localhost:19530"
+	Username string // 用户名，用于身份验证
+	Password string // 密码，用于身份验证
+	DBName   string // 数据库名称，指定要连接的数据库，默认为default
 
-	// GRPC连接配置
-	ConnectTimeout time.Duration // 仅控制建立连接的超时时间，不影响后续的操作超时。具体操作超时应该通过context.WithTimeout控制
+	EnableTLSAuth bool   // 是否启用TLS安全传输，如果地址使用https://则自动启用
+	APIKey        string // API密钥认证，与用户名/密码认证互斥，优先使用APIKey
 
 	// 重试配置
 	MaxRetry        uint          // 最大重试次数
 	MaxRetryBackoff time.Duration // 最大重试退避时间
 
-	// 保活配置
-	KeepAliveTime    time.Duration // 保活检测间隔时间
-	KeepAliveTimeout time.Duration // 保活检测超时时间
+	// GRPC连接配置
+	// 注意：这些配置项主要用于高级用户，大多数情况下使用默认值即可
+	WithBlock           bool          // 是否阻塞等待连接建立，默认为true（推荐保持默认）, 一旦设置了GRPC配置，则该配置一定是true
+	KeepaliveTime       time.Duration // Keepalive 时间间隔，用于保持连接活跃
+	KeepaliveTimeout    time.Duration // Keepalive 超时时间，超过此时间未响应则断开连接
+	PermitWithoutStream bool          // 是否允许无流连接，用于保持空闲连接
+	BaseDelay           time.Duration // 连接退避基础延迟时间，重连时的初始延迟
+	Multiplier          float64       // 连接退避倍数，每次重连延迟的倍数
+	Jitter              float64       // 连接退避抖动系数，避免同时重连
+	MaxDelay            time.Duration // 连接退避最大延迟时间，重连延迟的上限
+	MinConnectTimeout   time.Duration // 最小连接超时时间，连接建立的最短超时
+	MaxRecvMsgSize      int           // 最大接收消息大小，0表示使用默认值(2GB-1)
+
+	// 其他配置
+	DisableConn bool // 是否禁用连接握手，true时跳过向Milvus服务器发送ConnectRequest，通常用于测试或特殊场景
 }
 
 // DefaultOptions 返回默认配置
 func DefaultOptions() *Options {
 	return &Options{
-		Address:          "localhost:19530",
-		ConnectTimeout:   30 * time.Second, // 默认连接超时30秒
-		MaxRetry:         75,               // 默认最大重试75次
-		MaxRetryBackoff:  3 * time.Second,  // 默认最大退避3秒
-		KeepAliveTime:    5 * time.Second,  // 默认每5秒发送一次ping
-		KeepAliveTimeout: 10 * time.Second, // 默认ping超时10秒
+		Address: "localhost:19530",
+		DBName:  "default", // 默认数据库名称
+
+		MaxRetry:        75,              // 默认最大重试75次
+		MaxRetryBackoff: 3 * time.Second, // 默认最大退避3秒
+
+		// GRPC 默认配置 - 与 milvusclient.DefaultGrpcOpts 保持一致
+		WithBlock:           true,
+		KeepaliveTime:       5 * time.Second,
+		KeepaliveTimeout:    10 * time.Second,
+		PermitWithoutStream: true,
+		BaseDelay:           100 * time.Millisecond,
+		Multiplier:          1.6,
+		Jitter:              0.2,
+		MaxDelay:            3 * time.Second,
+		MinConnectTimeout:   3 * time.Second,
+		MaxRecvMsgSize:      math.MaxInt32, // 2GB - 1
+
+		DisableConn: false,
 	}
 }
 
@@ -81,20 +104,6 @@ func WithTLS() Option {
 	}
 }
 
-// WithIdentifier 设置连接标识符
-func WithIdentifier(identifier string) Option {
-	return func(o *Options) {
-		o.Identifier = identifier
-	}
-}
-
-// WithConnectTimeout 设置连接超时
-func WithConnectTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
-		o.ConnectTimeout = timeout
-	}
-}
-
 // WithRetry 设置重试配置
 func WithRetry(maxRetry uint, maxBackoff time.Duration) Option {
 	return func(o *Options) {
@@ -103,10 +112,44 @@ func WithRetry(maxRetry uint, maxBackoff time.Duration) Option {
 	}
 }
 
-// WithKeepAlive 设置保活配置
-func WithKeepAlive(keepAliveTime, keepAliveTimeout time.Duration) Option {
+// WithGrpcOpts 集中设置所有GRPC连接配置
+// 注意：这些配置项主要用于高级用户，大多数情况下使用默认值即可
+// keepaliveTime: Keepalive时间间隔，用于保持连接活跃
+// keepaliveTimeout: Keepalive超时时间，超过此时间未响应则断开连接
+// permitWithoutStream: 是否允许无流连接，用于保持空闲连接
+// baseDelay: 连接退避基础延迟时间，重连时的初始延迟
+// multiplier: 连接退避倍数，每次重连延迟的倍数
+// jitter: 连接退避抖动系数，避免同时重连
+// maxDelay: 连接退避最大延迟时间，重连延迟的上限
+// minConnectTimeout: 最小连接超时时间，连接建立的最短超时
+// maxRecvMsgSize: 最大接收消息大小，0表示使用默认值(2GB-1)
+func WithGrpcOpts(
+	keepaliveTime, keepaliveTimeout time.Duration,
+	permitWithoutStream bool,
+	baseDelay time.Duration,
+	multiplier, jitter float64,
+	maxDelay, minConnectTimeout time.Duration,
+	maxRecvMsgSize int,
+) Option {
 	return func(o *Options) {
-		o.KeepAliveTime = keepAliveTime
-		o.KeepAliveTimeout = keepAliveTimeout
+		o.WithBlock = true
+		o.KeepaliveTime = keepaliveTime
+		o.KeepaliveTimeout = keepaliveTimeout
+		o.PermitWithoutStream = permitWithoutStream
+		o.BaseDelay = baseDelay
+		o.Multiplier = multiplier
+		o.Jitter = jitter
+		o.MaxDelay = maxDelay
+		o.MinConnectTimeout = minConnectTimeout
+		o.MaxRecvMsgSize = maxRecvMsgSize
+	}
+}
+
+// WithDisableConn 设置是否禁用连接握手
+// disable: true时跳过向Milvus服务器发送ConnectRequest，通常用于测试或特殊场景
+// 注意：大多数情况下应保持默认值false，确保客户端创建时连接完全建立
+func WithDisableConn(disable bool) Option {
+	return func(o *Options) {
+		o.DisableConn = disable
 	}
 }

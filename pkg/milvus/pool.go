@@ -1,6 +1,7 @@
 package milvus
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -85,7 +86,7 @@ func (p *pool) add(name string, opts ...client.Option) (client.Client, error) {
 	}
 
 	// 创建新的客户端
-	cli, err := client.New(opts...)
+	cli, err := client.NewWithOptions(context.Background(), opts...)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create new client")
 	}

@@ -6,6 +6,7 @@ require (
 	github.com/milvus-io/milvus-sdk-go/v2 v2.3.5
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.9.0
+	google.golang.org/grpc v1.48.0
 )
 
 require (
@@ -29,7 +30,6 @@ require (
 	golang.org/x/sys v0.16.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	google.golang.org/genproto v0.0.0-20220503193339-ba3ae3f07e29 // indirect
-	google.golang.org/grpc v1.48.0 // indirect
 	google.golang.org/protobuf v1.32.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

@@ -1,42 +1,46 @@
 package client
 
 import (
-	"crypto/tls"
 	"time"
 )
 
-// Options 定义客户端选项
+// Options 定义Milvus客户端的配置选项
 type Options struct {
-	// Address 服务地址，格式：host:port
-	Address string
+	// 基础连接配置
+	Address       string // Milvus服务地址，格式：host:port，例如 "localhost:19530"
+	Username      string // 用户名，用于身份验证
+	Password      string // 密码，用于身份验证
+	APIKey        string // API密钥认证，与用户名/密码认证互斥，优先使用APIKey
+	DBName        string // 数据库名称，指定要连接的数据库，默认为default
+	Identifier    string // 连接标识符，用于区分不同的客户端连接，例如："client-1"或"search-service"
+	EnableTLSAuth bool   // 是否启用TLS安全传输，如果地址使用https://则自动启用
 
-	// Username 用户名（如果启用了身份验证）
-	Username string
+	// GRPC连接配置
+	ConnectTimeout time.Duration // 仅控制建立连接的超时时间，不影响后续的操作超时。具体操作超时应该通过context.WithTimeout控制
 
-	// Password 密码（如果启用了身份验证）
-	Password string
+	// 重试配置
+	MaxRetry        uint          // 最大重试次数
+	MaxRetryBackoff time.Duration // 最大重试退避时间
 
-	// ConnectTimeout 连接超时时间
-	ConnectTimeout time.Duration
-
-	// OperationTimeout 操作超时时间
-	OperationTimeout time.Duration
-
-	// TLSConfig TLS 配置
-	TLSConfig *tls.Config
+	// 保活配置
+	KeepAliveTime    time.Duration // 保活检测间隔时间
+	KeepAliveTimeout time.Duration // 保活检测超时时间
 }
 
-// Option 定义选项设置函数
-type Option func(*Options)
-
-// DefaultOptions 返回默认选项
+// DefaultOptions 返回默认配置
 func DefaultOptions() *Options {
 	return &Options{
 		Address:          "localhost:19530",
-		ConnectTimeout:   time.Second * 5,
-		OperationTimeout: time.Second * 30,
+		ConnectTimeout:   30 * time.Second, // 默认连接超时30秒
+		MaxRetry:         75,               // 默认最大重试75次
+		MaxRetryBackoff:  3 * time.Second,  // 默认最大退避3秒
+		KeepAliveTime:    5 * time.Second,  // 默认每5秒发送一次ping
+		KeepAliveTimeout: 10 * time.Second, // 默认ping超时10秒
 	}
 }
+
+// Option 定义配置选项函数类型
+type Option func(*Options)
 
 // WithAddress 设置服务地址
 func WithAddress(address string) Option {
@@ -45,25 +49,64 @@ func WithAddress(address string) Option {
 	}
 }
 
-// WithAuth 设置认证信息
+// WithAuth 设置用户名密码认证
 func WithAuth(username, password string) Option {
 	return func(o *Options) {
 		o.Username = username
 		o.Password = password
+		o.APIKey = "" // 清除APIKey，因为它与用户名/密码认证互斥
 	}
 }
 
-// WithTimeout 设置超时时间
-func WithTimeout(connect, operation time.Duration) Option {
+// WithAPIKey 设置API密钥认证
+func WithAPIKey(apiKey string) Option {
 	return func(o *Options) {
-		o.ConnectTimeout = connect
-		o.OperationTimeout = operation
+		o.APIKey = apiKey
+		o.Username = "" // 清除用户名/密码认证
+		o.Password = ""
 	}
 }
 
-// WithTLS 设置 TLS 配置
-func WithTLS(config *tls.Config) Option {
+// WithDatabase 设置数据库
+func WithDatabase(dbName string) Option {
 	return func(o *Options) {
-		o.TLSConfig = config
+		o.DBName = dbName
+	}
+}
+
+// WithTLS 启用TLS安全传输
+func WithTLS() Option {
+	return func(o *Options) {
+		o.EnableTLSAuth = true
+	}
+}
+
+// WithIdentifier 设置连接标识符
+func WithIdentifier(identifier string) Option {
+	return func(o *Options) {
+		o.Identifier = identifier
+	}
+}
+
+// WithConnectTimeout 设置连接超时
+func WithConnectTimeout(timeout time.Duration) Option {
+	return func(o *Options) {
+		o.ConnectTimeout = timeout
+	}
+}
+
+// WithRetry 设置重试配置
+func WithRetry(maxRetry uint, maxBackoff time.Duration) Option {
+	return func(o *Options) {
+		o.MaxRetry = maxRetry
+		o.MaxRetryBackoff = maxBackoff
+	}
+}
+
+// WithKeepAlive 设置保活配置
+func WithKeepAlive(keepAliveTime, keepAliveTimeout time.Duration) Option {
+	return func(o *Options) {
+		o.KeepAliveTime = keepAliveTime
+		o.KeepAliveTimeout = keepAliveTimeout
 	}
 }

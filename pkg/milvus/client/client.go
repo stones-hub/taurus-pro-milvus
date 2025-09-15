@@ -7,6 +7,8 @@ import (
 	milvus "github.com/milvus-io/milvus-sdk-go/v2/client"
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 	"github.com/pkg/errors"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // Client 定义 Milvus 客户端接口
@@ -65,15 +67,40 @@ func New(opts ...Option) (Client, error) {
 		opt(options)
 	}
 
+	// 构建GRPC选项
+	dialOptions := []grpc.DialOption{
+		// 使用阻塞式连接并设置超时
+		grpc.WithBlock(),
+		grpc.WithTimeout(options.ConnectTimeout),
+
+		// 保活配置
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                options.KeepAliveTime,
+			Timeout:             options.KeepAliveTimeout,
+			PermitWithoutStream: true,
+		}),
+	}
+
+	// 重试配置
+	retryLimit := &milvus.RetryRateLimitOption{
+		MaxRetry:   options.MaxRetry,
+		MaxBackoff: options.MaxRetryBackoff,
+	}
+
+	// 转换为Milvus配置
 	config := milvus.Config{
-		Address: options.Address,
+		Address:        options.Address,
+		Username:       options.Username,
+		Password:       options.Password,
+		APIKey:         options.APIKey,
+		DBName:         options.DBName,
+		Identifier:     options.Identifier,
+		EnableTLSAuth:  options.EnableTLSAuth,
+		DialOptions:    dialOptions,
+		RetryRateLimit: retryLimit,
 	}
 
-	if options.Username != "" {
-		config.Username = options.Username
-		config.Password = options.Password
-	}
-
+	// 创建Milvus客户端
 	cli, err := milvus.NewClient(context.Background(), config)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create milvus client")

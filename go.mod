@@ -1,8 +1,6 @@
 module github.com/stones-hub/taurus-pro-milvus
 
-go 1.24.4
-
-toolchain go1.24.7
+go 1.25.1
 
 require (
 	github.com/milvus-io/milvus/client/v2 v2.6.0

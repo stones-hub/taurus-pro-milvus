@@ -335,6 +335,8 @@ func TestPoolConcurrency(t *testing.T) {
 	t.Run("并发添加客户端", func(t *testing.T) {
 		const numGoroutines = 10
 		done := make(chan bool, numGoroutines)
+		// t.Skipf 只能在测试 goroutine 中调用，子 goroutine 只记录是否需要跳过
+		skip := make(chan struct{}, numGoroutines)
 
 		for i := 0; i < numGoroutines; i++ {
 			go func(id int) {
@@ -348,7 +350,7 @@ func TestPoolConcurrency(t *testing.T) {
 				if err != nil {
 					// 如果是连接错误，跳过测试
 					if err.Error() == "failed to create new client" {
-						t.Skipf("跳过测试，无法连接到Milvus服务器")
+						skip <- struct{}{}
 					}
 				}
 			}(i)
@@ -357,6 +359,9 @@ func TestPoolConcurrency(t *testing.T) {
 		// 等待所有goroutine完成
 		for i := 0; i < numGoroutines; i++ {
 			<-done
+		}
+		if len(skip) > 0 {
+			t.Skipf("跳过测试，无法连接到Milvus服务器")
 		}
 
 		// 验证所有客户端都被添加
@@ -396,6 +401,8 @@ func TestPoolConcurrency(t *testing.T) {
 	t.Run("并发MustGet操作", func(t *testing.T) {
 		const numGoroutines = 5
 		done := make(chan bool, numGoroutines)
+		// t.Skipf 只能在测试 goroutine 中调用，子 goroutine 只记录连接错误
+		skipErrs := make(chan error, numGoroutines)
 
 		for i := 0; i < numGoroutines; i++ {
 			go func(id int) {
@@ -407,7 +414,8 @@ func TestPoolConcurrency(t *testing.T) {
 					client.WithAuth(testUsername, testPassword),
 				)
 				if err != nil {
-					t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
+					skipErrs <- err
+					return
 				}
 				assert.NoError(t, err)
 				assert.NotNil(t, cli)
@@ -417,6 +425,9 @@ func TestPoolConcurrency(t *testing.T) {
 		// 等待所有goroutine完成
 		for i := 0; i < numGoroutines; i++ {
 			<-done
+		}
+		if len(skipErrs) > 0 {
+			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", <-skipErrs)
 		}
 
 		// 验证所有客户端都被创建

@@ -244,9 +244,11 @@ log.Printf("当前连接池中有 %d 个客户端: %v", len(clients), clients)
 ### Close
 
 ```go
-// 关闭所有客户端连接
+// 取消进行中的创建并关闭所有客户端；Close 是终态
 func (p *pool) Close() error
 ```
+
+Close 之后连接池不可复用：`Add`/`MustGet`/`Get`/`Remove` 返回 `ErrPoolClosed`，不会"复活"；重复调用 `Close` 返回 nil。Close 时仍在建连的客户端会被取消，建好后也会立即关闭，不会泄漏。
 
 **返回值**：
 - `error`: 错误信息，如果有客户端关闭失败则返回错误
@@ -257,6 +259,24 @@ err := pool.Close()
 if err != nil {
     log.Printf("关闭连接池时出错: %v", err)
 }
+```
+
+## 连接池语义
+
+- 连接池是**按名称注册、复用客户端**的注册表，不做请求级负载均衡。
+- 建连在池锁之外执行，一个名称连不上不会阻塞其他名称的 `Get`/`Has`/`List`/`Remove`/`Close`。
+- 同名并发 `MustGet` 共享同一次创建（成功或失败），后到调用方的配置被忽略；`Add` 遇到已存在或正在创建的名称返回 `already exists`。
+- 建连默认超时 `DefaultCreateTimeout`（10 秒），可用 `WithCreateTimeout` 调整。
+- `Pool` 接口保持不变。需要 context 控制时使用 `NewContextPool`，其 `AddContext` / `MustGetContext` 在 ctx 取消或超时时立即返回；等待同一次创建的调用方可各自独立取消，最后一个等待者离开时创建被取消。
+- `Remove` 正在创建的名称会取消创建；`Remove` 在池锁之外关闭客户端。
+
+```go
+pool := milvus.NewContextPool(milvus.WithCreateTimeout(5 * time.Second))
+defer pool.Close()
+
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+cli, err := pool.MustGetContext(ctx, "main", client.WithAddress("localhost:19530"))
 ```
 
 ## 使用模式

@@ -3,46 +3,115 @@ package client
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/milvus-io/milvus/client/v2/column"
 	"github.com/milvus-io/milvus/client/v2/entity"
 	"github.com/milvus-io/milvus/client/v2/index"
+	"github.com/milvus-io/milvus/client/v2/milvusclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-const (
-	// 测试配置
-	testAddress  = "192.168.103.113:19530"
-	testUsername = "root"
-	testPassword = ""
-	testDBName   = "test_db"
-)
+// 集成测试配置：MILVUS_INTEGRATION=1 显式开启，普通 go test 不连接任何服务器。
+// 开启后必须提供 MILVUS_TEST_ADDRESS；MILVUS_TEST_USERNAME / MILVUS_TEST_PASSWORD 可选（未启用认证时留空）。
+var testAddress, testUsername, testPassword string
 
-// 测试辅助函数
-func createTestClient(t *testing.T) Client {
+// requireIntegration 未开启集成测试时跳过；开启但配置缺失则失败
+func requireIntegration(t testing.TB) {
+	t.Helper()
+	if os.Getenv("MILVUS_INTEGRATION") != "1" {
+		t.Skip("集成测试未启用，设置 MILVUS_INTEGRATION=1 及 MILVUS_TEST_ADDRESS 开启")
+	}
+	testAddress = os.Getenv("MILVUS_TEST_ADDRESS")
+	if testAddress == "" {
+		t.Fatal("MILVUS_INTEGRATION=1 但未设置 MILVUS_TEST_ADDRESS")
+	}
+	testUsername = os.Getenv("MILVUS_TEST_USERNAME")
+	testPassword = os.Getenv("MILVUS_TEST_PASSWORD")
+}
+
+// 测试辅助函数：集成未启用时跳过，连接失败则失败
+func createTestClient(t testing.TB) Client {
+	requireIntegration(t)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	client, err := New(ctx, testAddress, testUsername, testPassword)
 	if err != nil {
-		t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
+		t.Fatalf("无法连接到Milvus服务器 %s: %v", testAddress, err)
 	}
 	require.NotNil(t, client)
+	// 先注册，LIFO 下最后执行，保证其他资源清理时连接仍可用
+	t.Cleanup(func() { _ = client.Close() })
 
 	return client
 }
 
+// registerCleanup 注册资源清理：使用独立的有界 context，不受测试自身 ctx 过期影响，清理失败会使测试失败
+func registerCleanup(t testing.TB, what string, fn func(ctx context.Context) error) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := fn(ctx); err != nil {
+			t.Errorf("清理%s失败: %v", what, err)
+		}
+	})
+}
+
+// registerDropCollection 注册集合清理，应在 CreateCollection 之前调用（删除不存在的集合不报错）
+func registerDropCollection(t testing.TB, cli Client, name string) {
+	t.Helper()
+	registerCleanup(t, "集合 "+name, func(ctx context.Context) error { return cli.DropCollection(ctx, name) })
+}
+
+// flushCollection 将 growing segment 封存，使后续索引/搜索针对 sealed segment
+func flushCollection(ctx context.Context, t testing.TB, cli Client, name string) {
+	t.Helper()
+	task, err := cli.GetClient().Flush(ctx, milvusclient.NewFlushOption(name))
+	require.NoError(t, err)
+	require.NoError(t, task.Await(ctx))
+}
+
+// requireDomainError 要求错误是服务端对请求本身的拒绝，且信息包含 wants 之一；
+// 超时、取消、断连不能算作期望的失败
+func requireDomainError(t testing.TB, err error, wants ...string) {
+	t.Helper()
+	require.Error(t, err)
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, context.Canceled)
+	switch status.Code(err) {
+	case codes.DeadlineExceeded, codes.Canceled, codes.Unavailable:
+		t.Fatalf("期望领域错误，实际是传输层错误: %v", err)
+	}
+	msg := strings.ToLower(err.Error())
+	for _, w := range wants {
+		if strings.Contains(msg, strings.ToLower(w)) {
+			return
+		}
+	}
+	t.Fatalf("错误信息应包含 %v 之一，实际: %v", wants, err)
+}
+
 func generateRandomCollectionName() string {
-	return fmt.Sprintf("test_collection_%d_%d", time.Now().Unix(), rand.Intn(10000))
+	return fmt.Sprintf("test_collection_%d_%d", time.Now().UnixNano(), rand.Intn(10000))
 }
 
 func generateRandomDBName() string {
-	return fmt.Sprintf("test_db_%d_%d", time.Now().Unix(), rand.Intn(10000))
+	return fmt.Sprintf("test_db_%d_%d", time.Now().UnixNano(), rand.Intn(10000))
+}
+
+func generateRandomAliasName() string {
+	return fmt.Sprintf("test_alias_%d_%d", time.Now().UnixNano(), rand.Intn(10000))
 }
 
 func createTestSchema(collectionName string) *entity.Schema {
@@ -96,14 +165,18 @@ func TestNew(t *testing.T) {
 	defer cancel()
 
 	t.Run("创建客户端成功", func(t *testing.T) {
+		requireIntegration(t)
 		client, err := New(ctx, testAddress, testUsername, testPassword)
-		assert.NoError(t, err)
-		assert.NotNil(t, client)
+		require.NoError(t, err)
+		require.NotNil(t, client)
 		defer client.Close()
 	})
 
 	t.Run("创建客户端失败-无效地址", func(t *testing.T) {
-		client, err := New(ctx, "invalid:address", testUsername, testPassword)
+		// 不访问服务器：本机未监听的端口，在 ctx 超时内失败
+		failCtx, failCancel := context.WithTimeout(ctx, time.Second)
+		defer failCancel()
+		client, err := New(failCtx, "127.0.0.1:1", "", "")
 		assert.Error(t, err)
 		assert.Nil(t, client)
 	})
@@ -115,21 +188,32 @@ func TestNewWithOptions(t *testing.T) {
 	defer cancel()
 
 	t.Run("使用默认选项创建客户端", func(t *testing.T) {
-		// 跳过需要实际连接的测试
-		t.Skip("跳过需要Milvus服务器连接的测试")
-	})
-
-	t.Run("使用自定义选项创建客户端", func(t *testing.T) {
+		requireIntegration(t)
 		client, err := NewWithOptions(ctx,
 			WithAddress(testAddress),
 			WithAuth(testUsername, testPassword),
-			WithDatabase("test_db"),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, client)
+		defer client.Close()
+	})
+
+	t.Run("使用自定义选项创建客户端", func(t *testing.T) {
+		admin := createTestClient(t)
+
+		// 自行创建唯一数据库并在结束后清理
+		dbName := generateRandomDBName()
+		registerCleanup(t, "数据库 "+dbName, func(ctx context.Context) error { return admin.DropDatabase(ctx, dbName) })
+		require.NoError(t, admin.CreateDatabase(ctx, dbName))
+
+		client, err := NewWithOptions(ctx,
+			WithAddress(testAddress),
+			WithAuth(testUsername, testPassword),
+			WithDatabase(dbName),
 			WithRetry(5, 2*time.Second),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
-		assert.NotNil(t, client)
+		require.NoError(t, err)
+		require.NotNil(t, client)
 		defer client.Close()
 	})
 }
@@ -137,7 +221,6 @@ func TestNewWithOptions(t *testing.T) {
 // TestGetClient 测试获取原始客户端
 func TestGetClient(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	t.Run("获取原始客户端", func(t *testing.T) {
 		rawClient := client.GetClient()
@@ -154,16 +237,26 @@ func TestGetClient(t *testing.T) {
 // TestDatabaseOperations 测试数据库操作
 func TestDatabaseOperations(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	dbName := generateRandomDBName()
+	dbDropped := false
+	registerCleanup(t, "数据库 "+dbName, func(ctx context.Context) error {
+		if dbDropped {
+			return nil
+		}
+		// 先切回 default，避免删除当前使用的库
+		if err := client.UseDatabase(ctx, "default"); err != nil {
+			return err
+		}
+		return client.DropDatabase(ctx, dbName)
+	})
 
 	t.Run("创建数据库", func(t *testing.T) {
 		err := client.CreateDatabase(ctx, dbName)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		t.Logf("✅ 成功创建数据库: %s", dbName)
 	})
 
@@ -174,20 +267,21 @@ func TestDatabaseOperations(t *testing.T) {
 
 	t.Run("删除数据库", func(t *testing.T) {
 		err := client.DropDatabase(ctx, dbName)
-		assert.NoError(t, err)
+		require.NoError(t, err)
+		dbDropped = true
 	})
 }
 
 // TestCollectionOperations 测试集合操作
 func TestCollectionOperations(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	collectionName := generateRandomCollectionName()
 	schema := createTestSchema(collectionName)
+	registerDropCollection(t, client, collectionName) // 兜底：子测试中途失败也要清理
 
 	t.Run("创建集合", func(t *testing.T) {
 		err := client.CreateCollection(ctx, schema, 1)
@@ -218,9 +312,7 @@ func TestCollectionOperations(t *testing.T) {
 		// 先创建索引才能加载集合
 		idx := index.NewIvfFlatIndex(entity.L2, 1024)
 		err := client.CreateIndex(ctx, collectionName, "vector", idx)
-		if err != nil {
-			t.Skipf("跳过测试，无法创建索引: %v", err)
-		}
+		require.NoError(t, err)
 
 		err = client.LoadCollection(ctx, collectionName)
 		assert.NoError(t, err)
@@ -246,46 +338,54 @@ func TestCollectionOperations(t *testing.T) {
 // TestAliasOperations 测试别名操作
 func TestAliasOperations(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// 使用唯一的集合和别名，避免与已有资源冲突
 	collectionName := generateRandomCollectionName()
-	alias := "test_alias"
-	schema := createTestSchema(collectionName)
+	otherCollection := generateRandomCollectionName() + "_other"
+	alias := generateRandomAliasName()
 
-	// 先创建集合
-	err := client.CreateCollection(ctx, schema, 1)
-	require.NoError(t, err)
-	defer client.DropCollection(ctx, collectionName)
+	registerDropCollection(t, client, collectionName)
+	registerDropCollection(t, client, otherCollection)
+	require.NoError(t, client.CreateCollection(ctx, createTestSchema(collectionName), 1))
+	require.NoError(t, client.CreateCollection(ctx, createTestSchema(otherCollection), 1))
+
+	aliasDropped := false
+	// 别名需在集合之前删除：cleanup 为 LIFO，故最后注册
+	registerCleanup(t, "别名 "+alias, func(ctx context.Context) error {
+		if aliasDropped {
+			return nil
+		}
+		return client.DropAlias(ctx, alias)
+	})
 
 	t.Run("创建别名", func(t *testing.T) {
-		err := client.CreateAlias(ctx, collectionName, alias)
-		if err != nil {
-			t.Skipf("跳过测试，别名已存在: %v", err)
-		}
+		require.NoError(t, client.CreateAlias(ctx, collectionName, alias))
+		desc, err := client.DescribeCollection(ctx, alias)
+		require.NoError(t, err)
+		assert.Equal(t, collectionName, desc.Name)
 	})
 
 	t.Run("修改别名", func(t *testing.T) {
-		newAlias := "new_test_alias"
-		err := client.AlterAlias(ctx, collectionName, newAlias)
-		if err != nil {
-			t.Skipf("跳过测试，别名冲突: %v", err)
-		}
-		alias = newAlias // 更新别名用于后续测试
+		// AlterAlias 将已有别名重新指向另一个集合
+		require.NoError(t, client.AlterAlias(ctx, otherCollection, alias))
+		desc, err := client.DescribeCollection(ctx, alias)
+		require.NoError(t, err)
+		assert.Equal(t, otherCollection, desc.Name)
 	})
 
 	t.Run("删除别名", func(t *testing.T) {
 		err := client.DropAlias(ctx, alias)
-		assert.NoError(t, err)
+		require.NoError(t, err)
+		aliasDropped = true
 	})
 }
 
 // TestPartitionOperations 测试分区操作
 func TestPartitionOperations(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -297,7 +397,7 @@ func TestPartitionOperations(t *testing.T) {
 	// 先创建集合
 	err := client.CreateCollection(ctx, schema, 1)
 	require.NoError(t, err)
-	defer client.DropCollection(ctx, collectionName)
+	registerDropCollection(t, client, collectionName)
 
 	t.Run("创建分区", func(t *testing.T) {
 		err := client.CreatePartition(ctx, collectionName, partitionName)
@@ -314,9 +414,7 @@ func TestPartitionOperations(t *testing.T) {
 		// 先创建索引才能加载分区
 		idx := index.NewIvfFlatIndex(entity.L2, 1024)
 		err := client.CreateIndex(ctx, collectionName, "vector", idx)
-		if err != nil {
-			t.Skipf("跳过测试，无法创建索引: %v", err)
-		}
+		require.NoError(t, err)
 
 		err = client.LoadPartitions(ctx, collectionName, []string{partitionName})
 		assert.NoError(t, err)
@@ -342,7 +440,6 @@ func TestPartitionOperations(t *testing.T) {
 // TestIndexOperations 测试索引操作
 func TestIndexOperations(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -353,7 +450,7 @@ func TestIndexOperations(t *testing.T) {
 	// 先创建集合
 	err := client.CreateCollection(ctx, schema, 1)
 	require.NoError(t, err)
-	defer client.DropCollection(ctx, collectionName)
+	registerDropCollection(t, client, collectionName)
 
 	// 创建索引
 	idx := index.NewIvfFlatIndex(entity.L2, 1024)
@@ -372,7 +469,6 @@ func TestIndexOperations(t *testing.T) {
 // TestDataOperations 测试数据操作
 func TestDataOperations(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -383,14 +479,12 @@ func TestDataOperations(t *testing.T) {
 	// 先创建集合
 	err := client.CreateCollection(ctx, schema, 1)
 	require.NoError(t, err)
-	defer client.DropCollection(ctx, collectionName)
+	registerDropCollection(t, client, collectionName)
 
 	// 先创建索引再加载集合
 	idx := index.NewIvfFlatIndex(entity.L2, 1024)
 	err = client.CreateIndex(ctx, collectionName, "vector", idx)
-	if err != nil {
-		t.Skipf("跳过测试，无法创建索引: %v", err)
-	}
+	require.NoError(t, err)
 
 	err = client.LoadCollection(ctx, collectionName)
 	require.NoError(t, err)
@@ -422,28 +516,6 @@ func TestDataOperations(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, results)
 		assert.Len(t, results, 1)
-	})
-
-	t.Run("向量相似度搜索", func(t *testing.T) {
-		// 测试不同的相似度度量
-		searchVectorsData := generateTestVectors(1, 128)
-		searchVectors := make([]entity.Vector, 1)
-		searchVectors[0] = entity.FloatVector(searchVectorsData[0])
-
-		// 测试L2距离
-		results, err := client.Search(ctx, collectionName, nil, []string{"text"}, searchVectors, "vector", entity.L2, 3, "", nil)
-		assert.NoError(t, err)
-		assert.NotNil(t, results)
-
-		// 测试IP内积
-		results, err = client.Search(ctx, collectionName, nil, []string{"text"}, searchVectors, "vector", entity.IP, 3, "", nil)
-		assert.NoError(t, err)
-		assert.NotNil(t, results)
-
-		// 测试COSINE余弦相似度
-		results, err = client.Search(ctx, collectionName, nil, []string{"text"}, searchVectors, "vector", entity.COSINE, 3, "", nil)
-		assert.NoError(t, err)
-		assert.NotNil(t, results)
 	})
 
 	t.Run("带过滤条件的向量搜索", func(t *testing.T) {
@@ -510,10 +582,154 @@ func TestDataOperations(t *testing.T) {
 	})
 }
 
+// TestSearchVectorFieldMetricAndParams 验证双向量字段集合上 Search 的字段、metric 和参数契约
+func TestSearchVectorFieldMetricAndParams(t *testing.T) {
+	client := createTestClient(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	const dim = 8
+	collectionName := generateRandomCollectionName()
+	schema := &entity.Schema{
+		CollectionName: collectionName,
+		Fields: []*entity.Field{
+			{Name: "id", DataType: entity.FieldTypeInt64, PrimaryKey: true},
+			{Name: "vec_a", DataType: entity.FieldTypeFloatVector, TypeParams: map[string]string{"dim": "8"}},
+			{Name: "vec_b", DataType: entity.FieldTypeFloatVector, TypeParams: map[string]string{"dim": "8"}},
+		},
+	}
+	registerDropCollection(t, client, collectionName)
+	require.NoError(t, client.CreateCollection(ctx, schema, 1))
+
+	// 第 i 行：vec_a 在第 i 维为 1，vec_b 在第 (i+1)%dim 维为 1（one-hot，两个字段的最近邻不同）
+	const rows = dim
+	ids := make([]int64, rows)
+	aData := make([][]float32, rows)
+	bData := make([][]float32, rows)
+	for i := 0; i < rows; i++ {
+		ids[i] = int64(i)
+		aData[i] = make([]float32, dim)
+		bData[i] = make([]float32, dim)
+		aData[i][i] = 1
+		bData[i][(i+1)%dim] = 1
+	}
+	_, err := client.Insert(ctx, collectionName, "",
+		column.NewColumnInt64("id", ids),
+		column.NewColumnFloatVector("vec_a", dim, aData),
+		column.NewColumnFloatVector("vec_b", dim, bData),
+	)
+	require.NoError(t, err)
+
+	flushCollection(ctx, t, client, collectionName)
+	require.NoError(t, client.CreateIndex(ctx, collectionName, "vec_a", index.NewIvfFlatIndex(entity.L2, 4)))
+	require.NoError(t, client.CreateIndex(ctx, collectionName, "vec_b", index.NewIvfFlatIndex(entity.L2, 4)))
+	require.NoError(t, client.LoadCollection(ctx, collectionName))
+
+	// 查询向量 e_3：vec_a 的最近邻是第 3 行，vec_b 的最近邻是第 2 行（(2+1)%8 == 3）
+	query := make([]float32, dim)
+	query[3] = 1
+	vectors := []entity.Vector{entity.FloatVector(query)}
+	params := map[string]string{"nprobe": "4"}
+
+	topID := func(t *testing.T, field string) int64 {
+		results, err := client.Search(ctx, collectionName, nil, nil, vectors, field, entity.L2, 1, "", params)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		require.Equal(t, 1, results[0].ResultCount)
+		return results[0].IDs.(*column.ColumnInt64).Data()[0]
+	}
+
+	t.Run("指定vec_a", func(t *testing.T) { assert.EqualValues(t, 3, topID(t, "vec_a")) })
+	t.Run("指定vec_b", func(t *testing.T) { assert.EqualValues(t, 2, topID(t, "vec_b")) })
+
+	t.Run("未指定字段时多向量字段集合由服务端报错", func(t *testing.T) {
+		_, err := client.Search(ctx, collectionName, nil, nil, vectors, "", entity.L2, 1, "", params)
+		requireDomainError(t, err, "anns_field")
+	})
+
+	t.Run("metric与索引不匹配由服务端报错", func(t *testing.T) {
+		_, err := client.Search(ctx, collectionName, nil, nil, vectors, "vec_a", entity.IP, 1, "", params)
+		requireDomainError(t, err, "metric")
+	})
+
+	t.Run("不存在的字段由服务端报错", func(t *testing.T) {
+		_, err := client.Search(ctx, collectionName, nil, nil, vectors, "no_such_field", entity.L2, 1, "", params)
+		requireDomainError(t, err, "no_such_field", "not found")
+	})
+}
+
+// TestSearchMetricMatchesIndex 为每种 metric 构造匹配的索引并 flush 后搜索，
+// 验证 metric 实际生效（自身距离/相似度），且与索引不匹配的 metric 被服务端拒绝
+func TestSearchMetricMatchesIndex(t *testing.T) {
+	client := createTestClient(t)
+
+	const dim = 16
+	metrics := []entity.MetricType{entity.L2, entity.IP, entity.COSINE}
+
+	// 单位向量：自身检索时 L2 距离为 0，IP/COSINE 相似度为 1
+	rng := rand.New(rand.NewSource(42))
+	data := make([][]float32, 20)
+	for i := range data {
+		v := make([]float32, dim)
+		var norm float64
+		for j := range v {
+			v[j] = rng.Float32() + 0.01
+			norm += float64(v[j] * v[j])
+		}
+		for j := range v {
+			v[j] /= float32(math.Sqrt(norm))
+		}
+		data[i] = v
+	}
+	query := []entity.Vector{entity.FloatVector(data[0])}
+
+	for _, metric := range metrics {
+		metric := metric
+		t.Run(string(metric), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+
+			collectionName := generateRandomCollectionName()
+			schema := &entity.Schema{
+				CollectionName: collectionName,
+				Fields: []*entity.Field{
+					{Name: "id", DataType: entity.FieldTypeInt64, PrimaryKey: true, AutoID: true},
+					{Name: "vector", DataType: entity.FieldTypeFloatVector, TypeParams: map[string]string{"dim": "16"}},
+				},
+			}
+			registerDropCollection(t, client, collectionName)
+			require.NoError(t, client.CreateCollection(ctx, schema, 1))
+			_, err := client.Insert(ctx, collectionName, "", column.NewColumnFloatVector("vector", dim, data))
+			require.NoError(t, err)
+			flushCollection(ctx, t, client, collectionName)
+			require.NoError(t, client.CreateIndex(ctx, collectionName, "vector", index.NewIvfFlatIndex(metric, 4)))
+			require.NoError(t, client.LoadCollection(ctx, collectionName))
+
+			results, err := client.Search(ctx, collectionName, nil, nil, query, "vector", metric, 3, "", map[string]string{"nprobe": "4"})
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, 3, results[0].ResultCount)
+			want := float32(1)
+			if metric == entity.L2 {
+				want = 0
+			}
+			assert.InDelta(t, want, results[0].Scores[0], 1e-3, "metric %s 的自身检索得分", metric)
+
+			for _, other := range metrics {
+				if other == metric {
+					continue
+				}
+				_, err := client.Search(ctx, collectionName, nil, nil, query, "vector", other, 3, "", map[string]string{"nprobe": "4"})
+				requireDomainError(t, err, "metric")
+			}
+		})
+	}
+}
+
 // TestCompactOperation 测试压缩操作
 func TestCompactOperation(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -524,7 +740,7 @@ func TestCompactOperation(t *testing.T) {
 	// 先创建集合
 	err := client.CreateCollection(ctx, schema, 1)
 	require.NoError(t, err)
-	defer client.DropCollection(ctx, collectionName)
+	registerDropCollection(t, client, collectionName)
 
 	t.Run("压缩集合", func(t *testing.T) {
 		compactionID, err := client.Compact(ctx, collectionName)
@@ -569,7 +785,6 @@ func TestClientClosed(t *testing.T) {
 // TestConcurrentOperations 测试并发操作
 func TestConcurrentOperations(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -580,7 +795,7 @@ func TestConcurrentOperations(t *testing.T) {
 	// 创建集合
 	err := client.CreateCollection(ctx, schema, 1)
 	require.NoError(t, err)
-	defer client.DropCollection(ctx, collectionName)
+	registerDropCollection(t, client, collectionName)
 
 	t.Run("并发检查集合", func(t *testing.T) {
 		const numGoroutines = 10
@@ -605,7 +820,6 @@ func TestConcurrentOperations(t *testing.T) {
 // TestErrorHandling 测试错误处理
 func TestErrorHandling(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -634,7 +848,7 @@ func TestErrorHandling(t *testing.T) {
 		// 创建集合
 		err := client.CreateCollection(ctx, schema, 1)
 		require.NoError(t, err)
-		defer client.DropCollection(ctx, collectionName)
+		registerDropCollection(t, client, collectionName)
 
 		// 检查不存在的分区
 		exists, err := client.HasPartition(ctx, collectionName, "non_existent_partition")
@@ -650,7 +864,6 @@ func TestErrorHandling(t *testing.T) {
 // TestDataPersistence 测试数据持久化（可选保留数据）
 func TestDataPersistence(t *testing.T) {
 	client := createTestClient(t)
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -658,7 +871,12 @@ func TestDataPersistence(t *testing.T) {
 	collectionName := generateRandomCollectionName()
 	schema := createTestSchema(collectionName)
 
-	// 创建集合
+	// 创建集合；默认必须清理，仅 KEEP_TEST_DATA=true 显式保留
+	if os.Getenv("KEEP_TEST_DATA") == "true" {
+		t.Logf("🔒 将保留测试数据 - 集合: %s，请手动删除", collectionName)
+	} else {
+		registerDropCollection(t, client, collectionName)
+	}
 	err := client.CreateCollection(ctx, schema, 1)
 	require.NoError(t, err)
 	t.Logf("🔍 创建了测试集合: %s", collectionName)
@@ -702,24 +920,11 @@ func TestDataPersistence(t *testing.T) {
 	results, err := client.Search(ctx, collectionName, nil, []string{"text"}, searchVectors, "vector", entity.L2, 3, "", nil)
 	require.NoError(t, err)
 	t.Logf("✅ 搜索返回 %d 个结果", len(results))
-
-	// 检查是否要保留数据
-	// 设置环境变量 KEEP_TEST_DATA=true 来保留测试数据
-	if os.Getenv("KEEP_TEST_DATA") == "true" {
-		t.Logf("🔒 保留测试数据 - 集合: %s", collectionName)
-		t.Logf("🔒 请手动删除集合: %s", collectionName)
-	} else {
-		// 清理数据
-		err = client.DropCollection(ctx, collectionName)
-		require.NoError(t, err)
-		t.Logf("🧹 已清理测试数据")
-	}
 }
 
 // BenchmarkOperations 性能测试
 func BenchmarkOperations(b *testing.B) {
-	client := createTestClient(&testing.T{})
-	defer client.Close()
+	client := createTestClient(b)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -729,12 +934,13 @@ func BenchmarkOperations(b *testing.B) {
 
 	// 创建集合
 	err := client.CreateCollection(ctx, schema, 1)
-	require.NoError(&testing.T{}, err)
-	defer client.DropCollection(ctx, collectionName)
+	require.NoError(b, err)
+	registerDropCollection(b, client, collectionName)
 
-	// 加载集合
+	// 创建索引后才能加载集合
+	require.NoError(b, client.CreateIndex(ctx, collectionName, "vector", index.NewIvfFlatIndex(entity.L2, 1024)))
 	err = client.LoadCollection(ctx, collectionName)
-	require.NoError(&testing.T{}, err)
+	require.NoError(b, err)
 
 	b.Run("HasCollection", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {

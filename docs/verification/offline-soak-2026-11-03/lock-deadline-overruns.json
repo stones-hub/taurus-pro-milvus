@@ -1,0 +1,542 @@
+[
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1542.214,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:51:46.810889Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.135,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:51:49.315344Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1795.633,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:51:51.817872Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.164,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:51:54.320983Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1800.202,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:51:56.82536Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.929,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:51:59.329722Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.204,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:01.832598Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.45,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:04.336605Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1800.365,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:06.840869Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.763,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:09.345266Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.461,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:11.846058Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.984,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:14.348443Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1801.382,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:16.852792Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1800.789,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:19.357017Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.076,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:21.860048Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.708,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:24.362382Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.478,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:26.864882Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.091,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:29.369309Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.249,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:31.872125Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1800.249,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:34.375714Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.584,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:36.880144Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.481,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:39.382036Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1794.799,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:41.883547Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.425,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:44.384987Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.605,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:46.888426Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.646,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:49.392864Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.433,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:51.896997Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.053,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:54.400224Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.677,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:56.903302Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.217,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:52:59.406527Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.197,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:01.910507Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.104,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:04.414443Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.814,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:06.915445Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.319,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:09.417578Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.938,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:11.920212Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.478,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:14.423476Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.635,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:16.924762Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.287,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:19.427988Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.609,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:21.931379Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.683,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:24.435763Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.782,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:26.940074Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1795.852,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:29.442486Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1800.432,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:31.94691Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1795.675,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:34.449001Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.757,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:36.953372Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.276,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:39.455697Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.489,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:41.958759Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.626,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:44.461435Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1801.165,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:46.965623Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1795.618,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:49.467788Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1796.156,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:51.970158Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.537,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:54.474486Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.802,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:56.976533Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.702,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:53:59.480836Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.583,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:54:01.985273Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.715,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:54:04.488219Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.183,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:54:06.989743Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1798.441,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:54:09.493206Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1797.993,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:54:11.995686Z"
+  },
+  {
+    "budget_ms": 500,
+    "deadline_overrun": true,
+    "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+    "ms": 1799.095,
+    "op": "has",
+    "phase": "fault-graceful-restart",
+    "time": "2026-11-03T03:54:14.500075Z"
+  }
+]

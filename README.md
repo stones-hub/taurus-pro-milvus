@@ -4,13 +4,23 @@
 
 ## 特性
 
-- 🚀 **高性能连接池**：支持多客户端连接管理，自动负载均衡
+- 🚀 **高性能连接池**：按名称注册并复用多个客户端（不做请求级负载均衡），建连有超时且不阻塞其他名称
 - 🔧 **完整的 CRUD 操作**：支持集合、分区、索引、数据的增删改查
 - 🎯 **向量搜索**：支持多种相似度度量（L2、IP、COSINE）的向量搜索
 - 🛡️ **并发安全**：所有操作都是线程安全的
 - 📊 **灵活配置**：支持丰富的客户端配置选项
-- 🔄 **自动重试**：内置重试机制，提高系统稳定性
+- 🔄 **SDK 重试**：沿用底层 SDK 的固定重试策略；当前 `WithRetry` 配置不控制实际重试次数，详见下文
 - 🧹 **资源管理**：自动资源清理，防止内存泄漏
+
+## 测试
+
+普通 `go test ./...` 不连接任何 Milvus 服务器；需要真实服务的集成测试默认跳过。显式开启：
+
+```bash
+MILVUS_INTEGRATION=1 MILVUS_TEST_ADDRESS=127.0.0.1:19530 MILVUS_TEST_USERNAME=root MILVUS_TEST_PASSWORD=Milvus go test -race -count=1 ./...
+```
+
+开启后缺少 `MILVUS_TEST_ADDRESS` 或连接失败会直接失败，不会跳过；用户名/密码可选。测试自行创建唯一命名的数据库、集合和别名并清理。
 
 ## 安装
 
@@ -129,8 +139,10 @@ client.WithTLS()                             // 启用TLS
 
 ### 重试配置
 
+**版本限制：**当前 SDK v2.6.5 未启用消费 `RetryRateLimit` 的拦截器，因此本库 `WithRetry` 虽会传入配置，但不会改变实际重试次数或退避。SDK 自身另有针对 `Unavailable` / `ResourceExhausted` 的固定重试策略。生产调用必须设置请求 context 的 deadline，不要依赖此选项限制耗时；本次未实现自定义重试策略。
+
 ```go
-client.WithRetry(5, 3*time.Second)           // 最大重试5次，退避3秒
+client.WithRetry(5, 3*time.Second)           // 兼容性配置入口；当前 SDK v2.6.5 不应用此配置
 ```
 
 ### 高级GRPC配置

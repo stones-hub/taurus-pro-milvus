@@ -1,7 +1,9 @@
 package milvus
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -10,12 +12,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	// 测试配置
-	testAddress  = "192.168.103.113:19530"
-	testUsername = "root"
-	testPassword = ""
-)
+// 集成测试配置：MILVUS_INTEGRATION=1 显式开启，普通 go test 不连接任何服务器。
+// 开启后必须提供 MILVUS_TEST_ADDRESS；MILVUS_TEST_USERNAME / MILVUS_TEST_PASSWORD 可选（未启用认证时留空）。
+var testAddress, testUsername, testPassword string
+
+// requireIntegration 未开启集成测试时跳过；开启但配置缺失则失败
+func requireIntegration(t testing.TB) {
+	t.Helper()
+	if os.Getenv("MILVUS_INTEGRATION") != "1" {
+		t.Skip("集成测试未启用，设置 MILVUS_INTEGRATION=1 及 MILVUS_TEST_ADDRESS 开启")
+	}
+	testAddress = os.Getenv("MILVUS_TEST_ADDRESS")
+	if testAddress == "" {
+		t.Fatal("MILVUS_INTEGRATION=1 但未设置 MILVUS_TEST_ADDRESS")
+	}
+	testUsername = os.Getenv("MILVUS_TEST_USERNAME")
+	testPassword = os.Getenv("MILVUS_TEST_PASSWORD")
+}
 
 // TestNewPool 测试创建连接池
 func TestNewPool(t *testing.T) {
@@ -28,6 +41,7 @@ func TestNewPool(t *testing.T) {
 
 // TestPoolAdd 测试添加客户端
 func TestPoolAdd(t *testing.T) {
+	requireIntegration(t)
 	pool := NewPool()
 	defer pool.Close()
 
@@ -36,9 +50,7 @@ func TestPoolAdd(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 		assert.NoError(t, err)
 		assert.True(t, pool.Has("client1"))
 		assert.Len(t, pool.List(), 1)
@@ -58,18 +70,14 @@ func TestPoolAdd(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 		assert.NoError(t, err)
 
 		err = pool.Add("client3",
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 		assert.NoError(t, err)
 
 		assert.True(t, pool.Has("client2"))
@@ -80,6 +88,7 @@ func TestPoolAdd(t *testing.T) {
 
 // TestPoolGet 测试获取客户端
 func TestPoolGet(t *testing.T) {
+	requireIntegration(t)
 	pool := NewPool()
 	defer pool.Close()
 
@@ -88,9 +97,7 @@ func TestPoolGet(t *testing.T) {
 		client.WithAddress(testAddress),
 		client.WithAuth(testUsername, testPassword),
 	)
-	if err != nil {
-		t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-	}
+	require.NoError(t, err)
 
 	t.Run("获取存在的客户端", func(t *testing.T) {
 		cli, err := pool.Get("test_client")
@@ -108,6 +115,7 @@ func TestPoolGet(t *testing.T) {
 
 // TestPoolMustGet 测试MustGet方法
 func TestPoolMustGet(t *testing.T) {
+	requireIntegration(t)
 	pool := NewPool()
 	defer pool.Close()
 
@@ -117,9 +125,7 @@ func TestPoolMustGet(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 
 		// 使用MustGet获取已存在的客户端
 		cli, err := pool.MustGet("existing_client")
@@ -133,24 +139,37 @@ func TestPoolMustGet(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 		assert.NoError(t, err)
 		assert.NotNil(t, cli)
 		assert.True(t, pool.Has("auto_created_client"))
 	})
 
 	t.Run("使用不同配置创建客户端", func(t *testing.T) {
+		// 自行创建唯一数据库并在结束后清理
+		dbName := fmt.Sprintf("pool_custom_db_%d", time.Now().UnixNano())
+		setupCtx, setupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer setupCancel()
+		admin, err := client.New(setupCtx, testAddress, testUsername, testPassword)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = admin.Close() }) // 最先注册，最后执行
+		t.Cleanup(func() {
+			// 独立的有界 context，不受 setupCtx 影响；清理失败使测试失败
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := admin.DropDatabase(ctx, dbName); err != nil {
+				t.Errorf("清理数据库 %s 失败: %v", dbName, err)
+			}
+		})
+		require.NoError(t, admin.CreateDatabase(setupCtx, dbName))
+
 		cli, err := pool.MustGet("custom_client",
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
-			client.WithDatabase("custom_db"),
+			client.WithDatabase(dbName),
 			client.WithRetry(3, 1*time.Second),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 		assert.NoError(t, err)
 		assert.NotNil(t, cli)
 		assert.True(t, pool.Has("custom_client"))
@@ -159,6 +178,7 @@ func TestPoolMustGet(t *testing.T) {
 
 // TestPoolRemove 测试移除客户端
 func TestPoolRemove(t *testing.T) {
+	requireIntegration(t)
 	pool := NewPool()
 	defer pool.Close()
 
@@ -168,9 +188,7 @@ func TestPoolRemove(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 
 		assert.True(t, pool.Has("removable_client"))
 		assert.Len(t, pool.List(), 1)
@@ -194,9 +212,7 @@ func TestPoolRemove(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 
 		// 获取客户端引用
 		cli, err := pool.Get("close_test_client")
@@ -214,6 +230,7 @@ func TestPoolRemove(t *testing.T) {
 
 // TestPoolHas 测试检查客户端是否存在
 func TestPoolHas(t *testing.T) {
+	requireIntegration(t)
 	pool := NewPool()
 	defer pool.Close()
 
@@ -226,9 +243,7 @@ func TestPoolHas(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 
 		assert.True(t, pool.Has("has_test_client"))
 		assert.False(t, pool.Has("other_client"))
@@ -237,6 +252,7 @@ func TestPoolHas(t *testing.T) {
 
 // TestPoolList 测试列出所有客户端
 func TestPoolList(t *testing.T) {
+	requireIntegration(t)
 	pool := NewPool()
 	defer pool.Close()
 
@@ -253,9 +269,7 @@ func TestPoolList(t *testing.T) {
 				client.WithAddress(testAddress),
 				client.WithAuth(testUsername, testPassword),
 			)
-			if err != nil {
-				t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-			}
+			require.NoError(t, err)
 		}
 
 		list := pool.List()
@@ -290,6 +304,7 @@ func TestPoolClose(t *testing.T) {
 	})
 
 	t.Run("关闭有客户端的连接池", func(t *testing.T) {
+		requireIntegration(t)
 		pool2 := NewPool()
 
 		// 添加多个客户端
@@ -299,9 +314,7 @@ func TestPoolClose(t *testing.T) {
 				client.WithAddress(testAddress),
 				client.WithAuth(testUsername, testPassword),
 			)
-			if err != nil {
-				t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-			}
+			require.NoError(t, err)
 		}
 
 		assert.Len(t, pool2.List(), 2)
@@ -329,14 +342,13 @@ func TestPoolClose(t *testing.T) {
 
 // TestPoolConcurrency 测试并发操作
 func TestPoolConcurrency(t *testing.T) {
+	requireIntegration(t)
 	pool := NewPool()
 	defer pool.Close()
 
 	t.Run("并发添加客户端", func(t *testing.T) {
 		const numGoroutines = 10
 		done := make(chan bool, numGoroutines)
-		// t.Skipf 只能在测试 goroutine 中调用，子 goroutine 只记录是否需要跳过
-		skip := make(chan struct{}, numGoroutines)
 
 		for i := 0; i < numGoroutines; i++ {
 			go func(id int) {
@@ -347,21 +359,13 @@ func TestPoolConcurrency(t *testing.T) {
 					client.WithAddress(testAddress),
 					client.WithAuth(testUsername, testPassword),
 				)
-				if err != nil {
-					// 如果是连接错误，跳过测试
-					if err.Error() == "failed to create new client" {
-						skip <- struct{}{}
-					}
-				}
+				assert.NoError(t, err)
 			}(i)
 		}
 
 		// 等待所有goroutine完成
 		for i := 0; i < numGoroutines; i++ {
 			<-done
-		}
-		if len(skip) > 0 {
-			t.Skipf("跳过测试，无法连接到Milvus服务器")
 		}
 
 		// 验证所有客户端都被添加
@@ -375,9 +379,7 @@ func TestPoolConcurrency(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 
 		const numGoroutines = 20
 		done := make(chan bool, numGoroutines)
@@ -401,8 +403,6 @@ func TestPoolConcurrency(t *testing.T) {
 	t.Run("并发MustGet操作", func(t *testing.T) {
 		const numGoroutines = 5
 		done := make(chan bool, numGoroutines)
-		// t.Skipf 只能在测试 goroutine 中调用，子 goroutine 只记录连接错误
-		skipErrs := make(chan error, numGoroutines)
 
 		for i := 0; i < numGoroutines; i++ {
 			go func(id int) {
@@ -413,10 +413,6 @@ func TestPoolConcurrency(t *testing.T) {
 					client.WithAddress(testAddress),
 					client.WithAuth(testUsername, testPassword),
 				)
-				if err != nil {
-					skipErrs <- err
-					return
-				}
 				assert.NoError(t, err)
 				assert.NotNil(t, cli)
 			}(i)
@@ -425,9 +421,6 @@ func TestPoolConcurrency(t *testing.T) {
 		// 等待所有goroutine完成
 		for i := 0; i < numGoroutines; i++ {
 			<-done
-		}
-		if len(skipErrs) > 0 {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", <-skipErrs)
 		}
 
 		// 验证所有客户端都被创建
@@ -438,12 +431,13 @@ func TestPoolConcurrency(t *testing.T) {
 
 // TestPoolErrorHandling 测试错误处理
 func TestPoolErrorHandling(t *testing.T) {
-	pool := NewPool()
+	// 不访问任何服务器：本机未监听端口，建连在创建超时内失败
+	pool := NewContextPool(WithCreateTimeout(time.Second))
 	defer pool.Close()
 
 	t.Run("使用无效配置添加客户端", func(t *testing.T) {
 		err := pool.Add("invalid_client",
-			client.WithAddress("invalid:address"),
+			client.WithAddress("127.0.0.1:1"),
 			client.WithAuth("invalid", "invalid"),
 		)
 		assert.Error(t, err)
@@ -453,7 +447,7 @@ func TestPoolErrorHandling(t *testing.T) {
 
 	t.Run("MustGet使用无效配置", func(t *testing.T) {
 		cli, err := pool.MustGet("invalid_must_get_client",
-			client.WithAddress("invalid:address"),
+			client.WithAddress("127.0.0.1:1"),
 		)
 		assert.Error(t, err)
 		assert.Nil(t, cli)
@@ -463,6 +457,7 @@ func TestPoolErrorHandling(t *testing.T) {
 
 // TestPoolIntegration 测试集成场景
 func TestPoolIntegration(t *testing.T) {
+	requireIntegration(t)
 	pool := NewPool()
 	defer pool.Close()
 
@@ -472,9 +467,7 @@ func TestPoolIntegration(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 		assert.True(t, pool.Has("lifecycle_client"))
 
 		// 2. 获取客户端并使用
@@ -504,9 +497,7 @@ func TestPoolIntegration(t *testing.T) {
 				client.WithAddress(testAddress),
 				client.WithAuth(testUsername, testPassword),
 			)
-			if err != nil {
-				t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-			}
+			require.NoError(t, err)
 		}
 
 		// 使用MustGet获取已存在的客户端
@@ -519,9 +510,7 @@ func TestPoolIntegration(t *testing.T) {
 			client.WithAddress(testAddress),
 			client.WithAuth(testUsername, testPassword),
 		)
-		if err != nil {
-			t.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-		}
+		require.NoError(t, err)
 		assert.NoError(t, err)
 		assert.NotNil(t, newCli)
 
@@ -546,6 +535,7 @@ func TestPoolIntegration(t *testing.T) {
 
 // BenchmarkPoolOperations 性能测试
 func BenchmarkPoolOperations(b *testing.B) {
+	requireIntegration(b)
 	pool := NewPool()
 	defer pool.Close()
 
@@ -554,9 +544,7 @@ func BenchmarkPoolOperations(b *testing.B) {
 		client.WithAddress(testAddress),
 		client.WithAuth(testUsername, testPassword),
 	)
-	if err != nil {
-		b.Skipf("跳过测试，无法连接到Milvus服务器: %v", err)
-	}
+	require.NoError(b, err)
 
 	b.Run("Get", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {

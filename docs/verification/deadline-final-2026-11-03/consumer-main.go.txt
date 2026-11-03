@@ -1,0 +1,388 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/milvus-io/milvus/client/v2/column"
+	"github.com/milvus-io/milvus/client/v2/entity"
+	"github.com/milvus-io/milvus/client/v2/index"
+	"github.com/milvus-io/milvus/client/v2/milvusclient"
+	pool "github.com/stones-hub/taurus-pro-milvus/pkg/milvus"
+	"github.com/stones-hub/taurus-pro-milvus/pkg/milvus/client"
+	"os"
+	"os/exec"
+	"runtime"
+	"runtime/pprof"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+const name = "soak_d32_n1024"
+
+var dir, addr, container string
+var mu sync.Mutex
+var jf *os.File
+var fail atomic.Int64
+var seq atomic.Int64
+
+func emit(v any)            { mu.Lock(); defer mu.Unlock(); b, _ := json.Marshal(v); jf.Write(append(b, '\n')) }
+func event(k string, v any) { emit(map[string]any{"time": time.Now().UTC(), "event": k, "data": v}) }
+func must(e error) {
+	if e != nil {
+		panic(e)
+	}
+}
+func vec(id int64) []float32 {
+	v := make([]float32, 32)
+	v[0] = float32(id) / 1024
+	for j := 1; j < 32; j++ {
+		v[j] = float32(id%17) * float32(j) / 1024
+	}
+	return v
+}
+func op(c client.Client, k string, ctx context.Context) error {
+	switch k {
+	case "search":
+		r, e := c.Search(ctx, name, nil, []string{"id"}, []entity.Vector{entity.FloatVector(vec(100))}, "v", entity.L2, 5, "id < 1024", map[string]string{"nprobe": "8"})
+		if e != nil {
+			return e
+		}
+		if len(r) != 1 || r[0].ResultCount != 5 {
+			return fmt.Errorf("search count %+v", r)
+		}
+		id, e := r[0].IDs.GetAsInt64(0)
+		if e != nil {
+			return e
+		}
+		if id != 100 || r[0].Scores[0] != 0 {
+			return fmt.Errorf("search id=%d score=%v", id, r[0].Scores)
+		}
+		return nil
+	case "query":
+		r, e := c.Query(ctx, name, nil, "id == 100", []string{"id", "v"})
+		if e != nil {
+			return e
+		}
+		found := false
+		vf := false
+		for _, col := range r {
+			if col.Name() == "id" {
+				id, e := col.GetAsInt64(0)
+				if e != nil {
+					return e
+				}
+				if col.Len() != 1 || id != 100 {
+					return fmt.Errorf("query id/count %v", col)
+				}
+				found = true
+			}
+			if col.Name() == "v" {
+				fv, ok := col.(*column.ColumnFloatVector)
+				if !ok || fv.Len() != 1 {
+					return fmt.Errorf("vector column %T", col)
+				}
+				a := fv.Data()[0]
+				b := vec(100)
+				if len(a) != len(b) {
+					return fmt.Errorf("vector len")
+				}
+				for j := range b {
+					if a[j] != b[j] {
+						return fmt.Errorf("vector mismatch")
+					}
+				}
+				vf = true
+			}
+		}
+		if !found || !vf {
+			return fmt.Errorf("missing columns")
+		}
+		return nil
+	case "has":
+		_, e := c.HasCollection(ctx, name)
+		return e
+	}
+	return fmt.Errorf("unknown op %s", k)
+}
+func request(phase, k string, budget time.Duration, fn func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	t := time.Now()
+	e := fn(ctx)
+	elapsed := time.Since(t)
+	cancel()
+	bad := elapsed > budget+150*time.Millisecond
+	if bad {
+		fail.Add(1)
+	}
+	s := ""
+	if e != nil {
+		s = e.Error()
+		if !strings.HasPrefix(phase, "fault") {
+			fail.Add(1)
+		}
+	}
+	emit(map[string]any{"time": time.Now().UTC(), "phase": phase, "op": k, "ms": float64(elapsed.Microseconds()) / 1000, "error": s, "deadline_overrun": bad, "budget_ms": budget.Milliseconds()})
+}
+func sample(tag string) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	var b bytes.Buffer
+	pprof.Lookup("goroutine").WriteTo(&b, 2)
+	s := b.String()
+	rss, _ := exec.Command("ps", "-o", "rss=", "-p", strconv.Itoa(os.Getpid())).Output()
+	stats, e := exec.Command("docker", "stats", "--no-stream", "--format", "{{json .}}", container).Output()
+	event("sample", map[string]any{"tag": tag, "goroutines": runtime.NumGoroutine(), "heap_alloc": m.HeapAlloc, "rss_kib": strings.TrimSpace(string(rss)), "grpc_readers": strings.Count(s, "google.golang.org/grpc/internal/transport.(*http2Client).reader"), "grpc_keepalive": strings.Count(s, "google.golang.org/grpc/internal/transport.(*http2Client).keepalive"), "docker_stats": string(stats), "docker_stats_error": fmt.Sprint(e)})
+	os.WriteFile(dir+"/goroutine-"+tag+".txt", b.Bytes(), 0600)
+}
+func flush(c client.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	task, e := c.GetClient().Flush(ctx, milvusclient.NewFlushOption(name))
+	must(e)
+	must(task.Await(ctx))
+	event("flush_complete", name)
+}
+func fault(c client.Client, p pool.ContextPool, kind string) {
+	sample("before-" + kind)
+	start := time.Now()
+	event("fault_start", kind)
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			request("fault-"+kind, "has", 500*time.Millisecond, func(ctx context.Context) error { return op(c, "has", ctx) })
+			request("fault-"+kind, "pool_existing", 500*time.Millisecond, func(ctx context.Context) error {
+				x, e := p.MustGetContext(ctx, "original")
+				if e == nil && x != c {
+					return fmt.Errorf("pool instance changed")
+				}
+				return e
+			})
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+	var cmd *exec.Cmd
+	if kind == "graceful-restart" {
+		cmd = exec.Command("docker", "restart", "--time", "30", container)
+	} else {
+		cmd = exec.Command("docker", "kill", "--signal", "KILL", container)
+	}
+	out, e := cmd.CombinedOutput()
+	event("docker_"+kind, map[string]any{"output": string(out), "error": fmt.Sprint(e), "elapsed_s": time.Since(start).Seconds()})
+	must(e)
+	if kind == "kill-start" {
+		out, e = exec.Command("docker", "start", container).CombinedOutput()
+		event("docker_start", map[string]any{"output": string(out), "error": fmt.Sprint(e)})
+		must(e)
+	}
+	deadline := time.Now().Add(150 * time.Second)
+	recovered := false
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		t := time.Now()
+		e = c.LoadCollection(ctx, name)
+		cancel()
+		event("recovery_load", map[string]any{"kind": kind, "elapsed_ms": time.Since(t).Milliseconds(), "error": fmt.Sprint(e)})
+		if e == nil {
+			ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+			e = op(c, "query", ctx)
+			if e == nil {
+				e = op(c, "search", ctx)
+			}
+			cancel()
+			if e == nil {
+				recovered = true
+				break
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	close(done)
+	wg.Wait()
+	if !recovered {
+		panic("recovery timeout " + kind)
+	}
+	x, e := p.Get("original")
+	must(e)
+	if x != c {
+		panic("original pool instance replaced")
+	}
+	event("fault_recovered", map[string]any{"kind": kind, "seconds": time.Since(start).Seconds(), "same_instance": true, "query_exact_id_vector": true, "search_exact_id_score": true})
+	sample("after-" + kind)
+}
+func stage(c client.Client, p pool.ContextPool, phase string, conc int, duration time.Duration, pace time.Duration) {
+	event("stage_start", map[string]any{"phase": phase, "concurrency": conc, "duration_s": duration.Seconds(), "pace_ms": pace.Milliseconds()})
+	t := time.Now()
+	var wg sync.WaitGroup
+	for i := 0; i < conc; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for time.Since(t) < duration {
+				k := "search"
+				if seq.Add(1)%4 == 0 {
+					k = "query"
+				}
+				request(phase, k, 2*time.Second, func(ctx context.Context) error {
+					x, e := p.MustGetContext(ctx, "original")
+					if e != nil {
+						return e
+					}
+					if x != c {
+						return fmt.Errorf("instance mismatch")
+					}
+					return op(x, k, ctx)
+				})
+				if pace > 0 {
+					time.Sleep(pace)
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+	event("stage_end", map[string]any{"phase": phase, "elapsed_s": time.Since(t).Seconds()})
+}
+func main() {
+	dir = os.Getenv("SOAK_DIR")
+	addr = os.Getenv("MILVUS_TEST_ADDRESS")
+	container = os.Getenv("CANDIDATE_CONTAINER")
+	var e error
+	jf, e = os.Create(dir + "/events.jsonl")
+	must(e)
+	defer jf.Close()
+	defer func() {
+		if x := recover(); x != nil {
+			event("fatal", fmt.Sprint(x))
+			jf.Sync()
+			os.Exit(1)
+		}
+	}()
+	event("process_start", map[string]any{"pid": os.Getpid(), "go": runtime.Version(), "dimension": 32, "base_rows": 1024, "index": "IVF_FLAT L2 nlist16 nprobe8", "search": "nq1 topK5, 75% search 25% query, exact base ID/vector checks", "request_deadline_s": 2})
+	p := pool.NewContextPool(pool.WithCreateTimeout(3 * time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	c, e := p.MustGetContext(ctx, "original", client.WithAddress(addr))
+	cancel()
+	must(e)
+	ctx, cancel = context.WithTimeout(context.Background(), 90*time.Second)
+	schema := &entity.Schema{CollectionName: name, Fields: []*entity.Field{{Name: "id", DataType: entity.FieldTypeInt64, PrimaryKey: true}, {Name: "v", DataType: entity.FieldTypeFloatVector, TypeParams: map[string]string{"dim": "32"}}}}
+	must(c.CreateCollection(ctx, schema, 1))
+	ids := make([]int64, 1024)
+	vectors := make([][]float32, 1024)
+	for i := range ids {
+		ids[i] = int64(i)
+		vectors[i] = vec(int64(i))
+	}
+	_, e = c.Insert(ctx, name, "", column.NewColumnInt64("id", ids), column.NewColumnFloatVector("v", 32, vectors))
+	must(e)
+	cancel()
+	flush(c)
+	ctx, cancel = context.WithTimeout(context.Background(), 90*time.Second)
+	must(c.CreateIndex(ctx, name, "v", index.NewIvfFlatIndex(entity.L2, 16)))
+	must(c.LoadCollection(ctx, name))
+	must(op(c, "query", ctx))
+	must(op(c, "search", ctx))
+	cancel()
+	event("deterministic_data_verified", true)
+	gateChecks(c)
+	fault(c, p, "graceful-restart")
+	fault(c, p, "kill-start")
+	for _, n := range []int{1, 8} {
+		stage(c, p, fmt.Sprintf("baseline-%d", n), n, 5*time.Second, 0)
+		sample(fmt.Sprintf("baseline-%d", n))
+	}
+	soakStart := time.Now()
+	event("soak_start", soakStart.UTC())
+	stop := make(chan struct{})
+	var extra sync.WaitGroup
+	extra.Add(1)
+	go func() {
+		defer extra.Done()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		id := int64(100000)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				id++
+				request("soak", "insert", 2*time.Second, func(ctx context.Context) error {
+					_, e := c.Insert(ctx, name, "", column.NewColumnInt64("id", []int64{id}), column.NewColumnFloatVector("v", 32, [][]float32{vec(id)}))
+					return e
+				})
+				request("soak", "delete", 2*time.Second, func(ctx context.Context) error { return c.Delete(ctx, name, "", fmt.Sprintf("id == %d", id)) })
+			}
+		}
+	}()
+	extra.Add(1)
+	go func() {
+		defer extra.Done()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				request("soak", "client_create_close", 2*time.Second, func(ctx context.Context) error {
+					x, e := client.New(ctx, addr, "", "")
+					if e != nil {
+						return e
+					}
+					defer x.Close()
+					return op(x, "has", ctx)
+				})
+			}
+		}
+	}()
+	extra.Add(1)
+	go func() {
+		defer extra.Done()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		i := 0
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				i++
+				sample(fmt.Sprintf("soak-%03d", i))
+			}
+		}
+	}()
+	stage(c, p, "soak", 8, 305*time.Second, 100*time.Millisecond)
+	close(stop)
+	extra.Wait()
+	event("soak_end", map[string]any{"elapsed_s": time.Since(soakStart).Seconds(), "failures": fail.Load()})
+	flush(c)
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	must(op(c, "query", ctx))
+	must(op(c, "search", ctx))
+	cancel()
+	sample("soak-end")
+	must(p.Close())
+	runtime.GC()
+	time.Sleep(time.Second)
+	sample("closed")
+	event("complete", map[string]any{"failures": fail.Load()})
+	jf.Sync()
+	if fail.Load() > 0 {
+		os.Exit(2)
+	}
+}
+
+var _ = sort.Ints

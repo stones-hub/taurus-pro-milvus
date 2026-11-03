@@ -1,0 +1,48 @@
+package consumer
+
+import (
+ "context"
+ "errors"
+ "fmt"
+ "os"
+ "os/exec"
+ "sync"
+ "testing"
+ "time"
+ "github.com/milvus-io/milvus/client/v2/column"
+ "github.com/milvus-io/milvus/client/v2/entity"
+ "github.com/milvus-io/milvus/client/v2/index"
+ "github.com/milvus-io/milvus/client/v2/milvusclient"
+ pool "github.com/stones-hub/taurus-pro-milvus/pkg/milvus"
+ "github.com/stones-hub/taurus-pro-milvus/pkg/milvus/client"
+)
+func must(t *testing.T,e error){t.Helper();if e!=nil{t.Fatal(e)}}
+func addr()string{return os.Getenv("MILVUS_TEST_ADDRESS")}
+func connect(t *testing.T)client.Client{t.Helper();ctx,c:=context.WithTimeout(context.Background(),5*time.Second);defer c(); x,e:=client.New(ctx,addr(),"","");must(t,e);t.Cleanup(func(){x.Close()});return x}
+func TestSearchPublicContract(t *testing.T){
+ c:=connect(t);ctx,cancel:=context.WithTimeout(context.Background(),60*time.Second);defer cancel()
+ name:=fmt.Sprintf("consumer_%d",time.Now().UnixNano())
+ s:=&entity.Schema{CollectionName:name,Fields:[]*entity.Field{{Name:"id",DataType:entity.FieldTypeInt64,PrimaryKey:true},{Name:"a",DataType:entity.FieldTypeFloatVector,TypeParams:map[string]string{"dim":"2"}},{Name:"b",DataType:entity.FieldTypeFloatVector,TypeParams:map[string]string{"dim":"2"}}}}
+ must(t,c.CreateCollection(ctx,s,1));defer c.DropCollection(ctx,name)
+ _,e:=c.Insert(ctx,name,"",column.NewColumnInt64("id",[]int64{101,202,303}),column.NewColumnFloatVector("a",2,[][]float32{{1,0},{0,1},{3,0}}),column.NewColumnFloatVector("b",2,[][]float32{{3,0},{1,0},{0,1}}));must(t,e)
+ task,e:=c.GetClient().Flush(ctx,milvusclient.NewFlushOption(name));must(t,e);must(t,task.Await(ctx))
+ must(t,c.CreateIndex(ctx,name,"a",index.NewIvfFlatIndex(entity.L2,1)));must(t,c.CreateIndex(ctx,name,"b",index.NewIvfFlatIndex(entity.L2,1)));must(t,c.LoadCollection(ctx,name))
+ vectors:=[]entity.Vector{entity.FloatVector([]float32{1,0})}
+ search:=func(field string,m entity.MetricType,p map[string]string)([]milvusclient.ResultSet,error){return c.Search(ctx,name,nil,nil,vectors,field,m,3,"",p)}
+ t.Run("b_returns_202",func(t *testing.T){r,e:=search("b",entity.L2,map[string]string{"nprobe":"1"});must(t,e);if len(r)!=1||r[0].ResultCount!=3{t.Fatalf("unexpected results %+v",r)};id,e:=r[0].IDs.GetAsInt64(0);must(t,e);if id!=202{t.Fatalf("id=%d want 202",id)}})
+ t.Run("a_returns_101",func(t *testing.T){r,e:=search("a",entity.L2,nil);must(t,e);id,e:=r[0].IDs.GetAsInt64(0);must(t,e);if id!=101{t.Fatalf("id=%d",id)}})
+ t.Run("metric_mismatch_rejected",func(t *testing.T){_,e:=search("b",entity.IP,nil);if e==nil{t.Fatal("IP against sealed L2 index unexpectedly succeeded")};t.Log(e)})
+ t.Run("range_params_change_results",func(t *testing.T){r,e:=search("b",entity.L2,map[string]string{"nprobe":"1","radius":"0.5","range_filter":"-1"});must(t,e);if len(r)!=1||r[0].ResultCount!=1{t.Fatalf("radius did not constrain to one exact match: %+v",r)};id,e:=r[0].IDs.GetAsInt64(0);must(t,e);if id!=202{t.Fatalf("range id=%d",id)}})
+}
+func TestConcurrentMustGet50(t *testing.T){p:=pool.NewPool();defer p.Close();const n=50;out:=make([]client.Client,n);errs:=make([]error,n);start:=make(chan struct{});var wg sync.WaitGroup;for i:=0;i<n;i++{wg.Add(1);go func(i int){defer wg.Done();<-start;out[i],errs[i]=p.MustGet("same",client.WithAddress(addr()))}(i)};close(start);wg.Wait();for i:=range out{must(t,errs[i]);if out[i]!=out[0]{t.Fatalf("different instance at %d",i)}};if len(p.List())!=1{t.Fatal(p.List())}}
+func TestBadConnectionIsolationAndContexts(t *testing.T){p:=pool.NewContextPool(pool.WithCreateTimeout(800*time.Millisecond));defer p.Close();must(t,p.Add("good",client.WithAddress(addr())));bad:=make(chan error,1);go func(){bad<-p.Add("bad",client.WithAddress("127.0.0.1:1"))}();time.Sleep(50*time.Millisecond);start:=time.Now();_,e:=p.Get("good");must(t,e);if !p.Has("good")||len(p.List())!=1{t.Fatal("missing good")};_,e=p.MustGet("good");must(t,e);if time.Since(start)>200*time.Millisecond{t.Fatal("existing operations blocked")};if e=<-bad;e==nil{t.Fatal("bad connection succeeded")};t.Logf("bad connection bounded, operations=%s",time.Since(start))
+ ctx,cancel:=context.WithTimeout(context.Background(),70*time.Millisecond);defer cancel();start=time.Now();_,e=p.MustGetContext(ctx,"deadline",client.WithAddress("127.0.0.1:1"));if !errors.Is(e,context.DeadlineExceeded)||time.Since(start)>500*time.Millisecond{t.Fatalf("deadline err=%v elapsed=%v",e,time.Since(start))}
+ ctx2,cancel2:=context.WithCancel(context.Background());done:=make(chan error,1);go func(){done<-p.AddContext(ctx2,"cancel",client.WithAddress("127.0.0.1:1"))}();time.Sleep(30*time.Millisecond);cancel2();if e=<-done;!errors.Is(e,context.Canceled){t.Fatal(e)}
+ must(t,p.Add("deadline",client.WithAddress(addr())));must(t,p.Add("cancel",client.WithAddress(addr())))
+}
+func TestRemoveCloseCreationAndTerminal(t *testing.T){
+ p:=pool.NewContextPool(pool.WithCreateTimeout(2*time.Second));res:=make(chan error,1);go func(){_,e:=p.MustGet("rm",client.WithAddress("127.0.0.1:1"));res<-e}();time.Sleep(80*time.Millisecond);must(t,p.Remove("rm"));if e:=<-res;e==nil{t.Fatal("removed creation published")};must(t,p.Add("rm",client.WithAddress(addr())));c,e:=p.Get("rm");must(t,e)
+ go func(){_,e:=p.MustGet("closing",client.WithAddress("127.0.0.1:1"));res<-e}();time.Sleep(80*time.Millisecond);must(t,p.Close());if e:=<-res;!errors.Is(e,pool.ErrPoolClosed){t.Fatal(e)};if c.GetClient()!=nil{t.Fatal("published client not closed")};for i:=0;i<50;i++{_,e=p.MustGet("late",client.WithAddress(addr()));if !errors.Is(e,pool.ErrPoolClosed){t.Fatal(e)}};if p.Has("late")||len(p.List())!=0{t.Fatal("resurrected")};must(t,p.Close())
+ for i:=0;i<20;i++{q:=pool.NewPool();var wg sync.WaitGroup;wg.Add(1);go func(){defer wg.Done();_,_ =q.MustGet("race",client.WithAddress(addr()))}();must(t,q.Close());wg.Wait();if q.Has("race")||len(q.List())!=0{t.Fatal("late publish")};_,e=q.Get("race");if !errors.Is(e,pool.ErrPoolClosed){t.Fatal(e)}}
+}
+func TestPauseResume(t *testing.T){c:=connect(t);container:=os.Getenv("CANDIDATE_CONTAINER");if container==""{t.Fatal("missing container")};must(t,exec.Command("docker","pause",container).Run());paused:=true;defer func(){if paused{exec.Command("docker","unpause",container).Run()}}();ctx,cancel:=context.WithTimeout(context.Background(),300*time.Millisecond);start:=time.Now();_,e:=c.HasCollection(ctx,"missing_consumer");cancel();if e==nil||time.Since(start)>2*time.Second{t.Fatalf("paused RPC err=%v elapsed=%v",e,time.Since(start))};t.Logf("paused RPC elapsed=%v err=%v",time.Since(start),e);must(t,exec.Command("docker","unpause",container).Run());paused=false;ctx2,cancel2:=context.WithTimeout(context.Background(),5*time.Second);defer cancel2();_,e=c.HasCollection(ctx2,"missing_consumer");must(t,e);t.Log("same original client works after unpause")}

@@ -101,7 +101,7 @@ cli, err := client.NewWithOptions(ctx,
 | `WithAPIKey` | `apiKey string` | API密钥认证 | `"your_api_key"` |
 | `WithDatabase` | `dbName string` | 数据库名称 | `"my_database"` |
 | `WithTLS` | 无 | 启用TLS | `client.WithTLS()` |
-| `WithRetry` | `maxRetry uint, maxBackoff time.Duration` | 重试配置 | `5, 3*time.Second` |
+| `WithRetry` | `maxRetry uint, maxBackoff time.Duration` | 兼容性入口：当前 SDK v2.6.5 不应用此配置，不能据此控制实际重试 | `5, 3*time.Second` |
 
 ### 高级GRPC配置
 
@@ -245,6 +245,8 @@ func (c *client) Query(ctx context.Context, collectionName string, partitionName
 func (c *client) Search(ctx context.Context, collectionName string, partitionNames []string, outputFields []string, vectors []entity.Vector, vectorField string, metricType entity.MetricType, topK int, expr string, params map[string]string) ([]milvusclient.ResultSet, error)
 ```
 
+`vectorField` 作为 `anns_field`（多向量字段集合必须指定）；`metricType` 非空时随请求发送，与索引的 metric 不一致时由服务端返回错误；`params` 写入搜索参数 `params`，形如 `"10"`、`"0.5"`、`"true"` 的值按数字/布尔编码（`nprobe` 即编码为数字 10）；`NaN`/`Inf` 等无法编码为 JSON 的值会被本地拒绝并返回错误。
+
 #### Delete
 ```go
 // ctx: 上下文，用于控制请求生命周期
@@ -306,6 +308,14 @@ if err != nil {
 ## 并发安全
 
 客户端实例是线程安全的，可以在多个 goroutine 中并发使用。但建议为每个 goroutine 使用独立的客户端实例以获得最佳性能。
+
+同步协议（可取消的读写门禁）：
+- 只读操作（HasCollection、Query、Search、DescribeCollection 等）共享门禁，可并发；变更操作与 `UseDatabase` 独占门禁。门禁按到达顺序（FIFO）授予，写操作不会被持续到达的读操作饿死。
+- 请求的 `ctx` 同时约束等待门禁的阶段：被长写操作（如 LoadCollection）占用时，短 deadline/已取消的请求会按 ctx 及时返回 `context.DeadlineExceeded` / `context.Canceled`，且不发出 RPC、不改变数据库状态。门禁在 RPC（含 Await）期间仍被占用，因此长写操作本身会让其他请求排队，直到它们的 ctx 到期。
+- `UseDatabase` 与其他操作互斥；若切换失败（含连接握手失败或超时），SDK 内部的当前库会回滚为切换前的库（记录的是 SDK 解析后的库名：`WithDatabase` 显式值优先，为空时取自 `WithAddress` URL 路径中的库名）。
+- 错误契约分两阶段：**等待门禁**阶段的取消/超时返回 context 错误（`errors.Is(err, context.Canceled/DeadlineExceeded)` 成立）；**已发出的 RPC**（含 Await 轮询）沿用 SDK/gRPC 错误，超时表现为 gRPC status `DeadlineExceeded`，`errors.Is(err, context.DeadlineExceeded)` 不保证成立，调用方应结合 `status.Code(err)` 判断。
+- `Close()` 无 ctx：先拒绝新请求并唤醒所有等待者（返回 `client is closed`），再等待在途操作结束后仅关闭一次 SDK；并发重复调用等待首次关闭完成后返回 nil。`GetClient()` 不阻塞，关闭开始后返回 nil。
+- `GetClient()` 返回的裸 SDK 句柄不受上述同步保护，调用方不得让它与 `Close` / `UseDatabase` 并发使用。
 
 ## 资源管理
 

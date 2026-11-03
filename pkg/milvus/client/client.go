@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"math"
+	"strconv"
 	"sync"
 
 	"github.com/milvus-io/milvus/client/v2/column"
@@ -63,10 +65,15 @@ type Client interface {
 }
 
 // client 实现 Client 接口
+//
+// 同步协议：所有 RPC 方法先通过 gate 获取读（只读操作）或写（变更操作、UseDatabase）门禁，
+// 等待阶段受 ctx 控制，取消/超时立即返回 ctx 错误且不发 RPC；RPC（含 Await）期间持有门禁，
+// 以保证 UseDatabase 不与其他操作交错，且 Close 不与仍在运行的 SDK 调用竞争。
+// gate 内部只有一把仅保护内存状态的互斥锁，不跨 RPC，无锁顺序问题。
 type client struct {
-	cli    *milvusclient.Client
-	mu     sync.RWMutex
-	closed bool
+	cli  *milvusclient.Client
+	gate gate
+	db   string // 当前数据库名，仅在持有写门禁时读写，用于 UseDatabase 失败时回滚 SDK 状态
 }
 
 // New 创建新的客户端实例
@@ -136,26 +143,59 @@ func NewWithOptions(ctx context.Context, opts ...Option) (Client, error) {
 		grpc.MaxCallRecvMsgSize(options.MaxRecvMsgSize),
 	))
 
+	// SDK 在 grpc 拨号成功但握手（Connect）失败时不会关闭连接，且不返回句柄。
+	// 这里在握手期间捕获首个 RPC 所用的连接，失败时由本库关闭。
+	capture := &connCapture{active: true}
+	dialOptions = append(dialOptions, grpc.WithChainUnaryInterceptor(capture.interceptor))
 	config.DialOptions = dialOptions
 
 	cli, err := milvusclient.New(ctx, config)
 	if err != nil {
+		capture.release(true)
 		return nil, errors.Wrap(err, "failed to create milvus client")
 	}
+	capture.release(false)
 
 	return &client{
-		cli:    cli,
-		closed: false,
+		cli: cli,
+		db:  config.DBName, // SDK 解析后的库名：显式库优先，否则取自地址 URL 路径
 	}, nil
 }
 
-// GetClient 获取原始 Milvus 客户端
-// 返回值: 原始Milvus客户端实例，如果客户端已关闭则返回nil
-func (c *client) GetClient() *milvusclient.Client {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+// connCapture 仅在 milvusclient.New 执行期间记录 grpc 连接，结束后不保留连接引用
+type connCapture struct {
+	mu     sync.Mutex
+	active bool
+	cc     *grpc.ClientConn
+}
 
-	if c.closed {
+func (c *connCapture) interceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	c.mu.Lock()
+	if c.active && c.cc == nil {
+		c.cc = cc
+	}
+	c.mu.Unlock()
+	return invoker(ctx, method, req, reply, cc, opts...)
+}
+
+// release 结束捕获并清除引用；closeConn 为 true 时关闭已捕获的连接
+func (c *connCapture) release(closeConn bool) {
+	c.mu.Lock()
+	cc := c.cc
+	c.active = false
+	c.cc = nil
+	c.mu.Unlock()
+	if closeConn && cc != nil {
+		_ = cc.Close()
+	}
+}
+
+// GetClient 获取原始 Milvus 客户端
+// 返回值: 原始Milvus客户端实例，如果客户端已关闭（或正在关闭）则返回nil
+// 该方法不等待任何在途操作。返回的裸 SDK 句柄不受本库同步保护：
+// 调用方不得让它与 Close 或 UseDatabase 并发使用。
+func (c *client) GetClient() *milvusclient.Client {
+	if c.gate.isClosing() {
 		return nil
 	}
 
@@ -167,12 +207,10 @@ func (c *client) GetClient() *milvusclient.Client {
 // schema: 集合模式定义，包含字段、索引等信息，例如包含id、vector、text字段的Schema
 // shardNum: 分片数量，用于数据分片存储，建议值为1-8
 func (c *client) CreateCollection(ctx context.Context, schema *entity.Schema, shardNum int32) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewCreateCollectionOption(schema.CollectionName, schema).
 		WithShardNum(shardNum)
@@ -184,12 +222,10 @@ func (c *client) CreateCollection(ctx context.Context, schema *entity.Schema, sh
 // ctx: 上下文，用于控制请求生命周期
 // collectionName: 要删除的集合名称，例如"my_collection"
 func (c *client) DropCollection(ctx context.Context, collectionName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewDropCollectionOption(collectionName)
 	return c.cli.DropCollection(ctx, option)
@@ -200,12 +236,10 @@ func (c *client) DropCollection(ctx context.Context, collectionName string) erro
 // collectionName: 要检查的集合名称，例如"my_collection"
 // 返回值: (是否存在, 错误信息)
 func (c *client) HasCollection(ctx context.Context, collectionName string) (bool, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.closed {
-		return false, errors.New("client is closed")
+	if err := c.gate.acquire(ctx, false); err != nil {
+		return false, err
 	}
+	defer c.gate.release(false)
 
 	option := milvusclient.NewHasCollectionOption(collectionName)
 	return c.cli.HasCollection(ctx, option)
@@ -215,12 +249,10 @@ func (c *client) HasCollection(ctx context.Context, collectionName string) (bool
 // ctx: 上下文，用于控制请求生命周期
 // collectionName: 要加载的集合名称，例如"my_collection"
 func (c *client) LoadCollection(ctx context.Context, collectionName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewLoadCollectionOption(collectionName)
 	task, err := c.cli.LoadCollection(ctx, option)
@@ -234,12 +266,10 @@ func (c *client) LoadCollection(ctx context.Context, collectionName string) erro
 // ctx: 上下文，用于控制请求生命周期
 // collectionName: 要释放的集合名称
 func (c *client) ReleaseCollection(ctx context.Context, collectionName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewReleaseCollectionOption(collectionName)
 	return c.cli.ReleaseCollection(ctx, option)
@@ -250,12 +280,10 @@ func (c *client) ReleaseCollection(ctx context.Context, collectionName string) e
 // collectionName: 集合名称
 // 返回值: (统计信息映射, 错误信息)
 func (c *client) GetCollectionStatistics(ctx context.Context, collectionName string) (map[string]string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.closed {
-		return nil, errors.New("client is closed")
+	if err := c.gate.acquire(ctx, false); err != nil {
+		return nil, err
 	}
+	defer c.gate.release(false)
 
 	option := milvusclient.NewGetCollectionStatsOption(collectionName)
 	return c.cli.GetCollectionStats(ctx, option)
@@ -266,12 +294,10 @@ func (c *client) GetCollectionStatistics(ctx context.Context, collectionName str
 // collectionName: 集合名称，例如"my_collection"
 // partitionName: 分区名称，例如"partition_1"
 func (c *client) CreatePartition(ctx context.Context, collectionName string, partitionName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewCreatePartitionOption(collectionName, partitionName)
 	return c.cli.CreatePartition(ctx, option)
@@ -282,12 +308,10 @@ func (c *client) CreatePartition(ctx context.Context, collectionName string, par
 // collectionName: 集合名称
 // partitionName: 要删除的分区名称
 func (c *client) DropPartition(ctx context.Context, collectionName string, partitionName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewDropPartitionOption(collectionName, partitionName)
 	return c.cli.DropPartition(ctx, option)
@@ -299,12 +323,10 @@ func (c *client) DropPartition(ctx context.Context, collectionName string, parti
 // partitionName: 要检查的分区名称
 // 返回值: (是否存在, 错误信息)
 func (c *client) HasPartition(ctx context.Context, collectionName string, partitionName string) (bool, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.closed {
-		return false, errors.New("client is closed")
+	if err := c.gate.acquire(ctx, false); err != nil {
+		return false, err
 	}
+	defer c.gate.release(false)
 
 	option := milvusclient.NewHasPartitionOption(collectionName, partitionName)
 	return c.cli.HasPartition(ctx, option)
@@ -315,12 +337,10 @@ func (c *client) HasPartition(ctx context.Context, collectionName string, partit
 // collectionName: 集合名称，例如"my_collection"
 // partitionNames: 要加载的分区名称列表，例如[]string{"partition_1", "partition_2"}
 func (c *client) LoadPartitions(ctx context.Context, collectionName string, partitionNames []string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewLoadPartitionsOption(collectionName, partitionNames...)
 	task, err := c.cli.LoadPartitions(ctx, option)
@@ -335,12 +355,10 @@ func (c *client) LoadPartitions(ctx context.Context, collectionName string, part
 // collectionName: 集合名称
 // partitionNames: 要释放的分区名称列表
 func (c *client) ReleasePartitions(ctx context.Context, collectionName string, partitionNames []string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewReleasePartitionsOptions(collectionName, partitionNames...)
 	return c.cli.ReleasePartitions(ctx, option)
@@ -352,12 +370,10 @@ func (c *client) ReleasePartitions(ctx context.Context, collectionName string, p
 // fieldName: 字段名称，例如"vector"
 // idx: 索引配置对象，例如index.NewIvfFlatIndex(entity.L2, 1024)
 func (c *client) CreateIndex(ctx context.Context, collectionName string, fieldName string, idx index.Index) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewCreateIndexOption(collectionName, fieldName, idx)
 	task, err := c.cli.CreateIndex(ctx, option)
@@ -372,12 +388,10 @@ func (c *client) CreateIndex(ctx context.Context, collectionName string, fieldNa
 // collectionName: 集合名称
 // fieldName: 字段名称
 func (c *client) DropIndex(ctx context.Context, collectionName string, fieldName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewDropIndexOption(collectionName, fieldName)
 	return c.cli.DropIndex(ctx, option)
@@ -390,12 +404,10 @@ func (c *client) DropIndex(ctx context.Context, collectionName string, fieldName
 // columns: 列数据，支持多个列，例如column.NewColumnFloatVector("vector", 128, vectors), column.NewColumnVarChar("text", texts)
 // 返回值: (插入数据的ID列, 错误信息)
 func (c *client) Insert(ctx context.Context, collectionName string, partitionName string, columns ...column.Column) (column.Column, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return nil, errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return nil, err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewColumnBasedInsertOption(collectionName, columns...)
 	if partitionName != "" {
@@ -414,12 +426,10 @@ func (c *client) Insert(ctx context.Context, collectionName string, partitionNam
 // partitionName: 分区名称，空字符串表示默认分区，例如"partition_1"或""
 // expr: 删除条件表达式，例如"id > 0"、"id in [1,2,3]"、"text like 'test%'"
 func (c *client) Delete(ctx context.Context, collectionName string, partitionName string, expr string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewDeleteOption(collectionName).WithExpr(expr)
 	if partitionName != "" {
@@ -442,19 +452,63 @@ func (c *client) Delete(ctx context.Context, collectionName string, partitionNam
 // params: 搜索参数，例如map[string]string{"nprobe": "10"}
 // 返回值: (搜索结果列表, 错误信息)
 func (c *client) Search(ctx context.Context, collectionName string, partitionNames []string, outputFields []string, vectors []entity.Vector, vectorField string, metricType entity.MetricType, topK int, expr string, params map[string]string) ([]milvusclient.ResultSet, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.closed {
-		return nil, errors.New("client is closed")
+	if err := c.gate.acquire(ctx, false); err != nil {
+		return nil, err
 	}
+	defer c.gate.release(false)
 
+	option, err := buildSearchOption(collectionName, partitionNames, outputFields, vectors, vectorField, metricType, topK, expr, params)
+	if err != nil {
+		return nil, err
+	}
+	return c.cli.Search(ctx, option)
+}
+
+// buildSearchOption 将 Search 的公开参数转换为 SDK 搜索选项
+// vectorField 作为 anns_field；metricType 非空时写入 metric_type（与索引不匹配时由服务端报错）；
+// params 写入 ANN 搜索参数 params（JSON），数字和布尔字符串按对应类型编码，例如 nprobe="10" 编码为 10
+func buildSearchOption(collectionName string, partitionNames []string, outputFields []string, vectors []entity.Vector, vectorField string, metricType entity.MetricType, topK int, expr string, params map[string]string) (milvusclient.SearchOption, error) {
 	option := milvusclient.NewSearchOption(collectionName, topK, vectors).
 		WithPartitions(partitionNames...).
 		WithOutputFields(outputFields...).
 		WithFilter(expr)
 
-	return c.cli.Search(ctx, option)
+	if vectorField != "" {
+		option = option.WithANNSField(vectorField)
+	}
+	if metricType != "" {
+		option = option.WithSearchParam("metric_type", string(metricType))
+	}
+	if len(params) > 0 {
+		annParam := index.NewCustomAnnParam()
+		for k, v := range params {
+			val, err := parseParamValue(v)
+			if err != nil {
+				return nil, errors.Wrapf(err, "invalid search param %q", k)
+			}
+			annParam.WithExtraParam(k, val)
+		}
+		option = option.WithAnnParam(annParam)
+	}
+	return option, nil
+}
+
+// parseParamValue 将字符串参数值转换为 JSON 中更合适的类型
+// NaN/Inf 无法编码为 JSON（SDK 会吞掉编码错误并发送空参数），因此本地直接拒绝
+func parseParamValue(v string) (any, error) {
+	if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return i, nil
+	}
+	if f, err := strconv.ParseFloat(v, 64); err == nil {
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, errors.Errorf("non-finite value %q is not allowed", v)
+		}
+		return f, nil
+	}
+	if v == "true" || v == "false" {
+		return v == "true", nil
+	}
+	return v, nil
 }
 
 // Query 查询数据
@@ -465,12 +519,10 @@ func (c *client) Search(ctx context.Context, collectionName string, partitionNam
 // outputFields: 输出字段列表，例如[]string{"text", "id"}
 // 返回值: (查询结果列数据, 错误信息)
 func (c *client) Query(ctx context.Context, collectionName string, partitionNames []string, expr string, outputFields []string) ([]column.Column, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.closed {
-		return nil, errors.New("client is closed")
+	if err := c.gate.acquire(ctx, false); err != nil {
+		return nil, err
 	}
+	defer c.gate.release(false)
 
 	option := milvusclient.NewQueryOption(collectionName).
 		WithPartitions(partitionNames...).
@@ -494,12 +546,10 @@ func (c *client) Query(ctx context.Context, collectionName string, partitionName
 // ctx: 上下文，用于控制请求生命周期
 // dbName: 数据库名称，例如"my_database"
 func (c *client) CreateDatabase(ctx context.Context, dbName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewCreateDatabaseOption(dbName)
 	return c.cli.CreateDatabase(ctx, option)
@@ -509,12 +559,10 @@ func (c *client) CreateDatabase(ctx context.Context, dbName string) error {
 // ctx: 上下文，用于控制请求生命周期
 // dbName: 要删除的数据库名称，例如"my_database"
 func (c *client) DropDatabase(ctx context.Context, dbName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewDropDatabaseOption(dbName)
 	return c.cli.DropDatabase(ctx, option)
@@ -524,15 +572,22 @@ func (c *client) DropDatabase(ctx context.Context, dbName string) error {
 // ctx: 上下文，用于控制请求生命周期
 // dbName: 要切换到的数据库名称，例如"my_database"
 func (c *client) UseDatabase(ctx context.Context, dbName string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
+	// SDK 的 UseDatabase 会先改写内部 currentDB 再重连，重连失败（含 ctx 超时）不会回滚。
+	// 失败时用已取消的 ctx 再切回原库：只恢复 SDK 内部状态，不发 RPC。
 	option := milvusclient.NewUseDatabaseOption(dbName)
-	return c.cli.UseDatabase(ctx, option)
+	if err := c.cli.UseDatabase(ctx, option); err != nil {
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = c.cli.UseDatabase(cancelled, milvusclient.NewUseDatabaseOption(c.db))
+		return err
+	}
+	c.db = dbName
+	return nil
 }
 
 // DescribeCollection 描述集合
@@ -540,12 +595,10 @@ func (c *client) UseDatabase(ctx context.Context, dbName string) error {
 // collectionName: 集合名称，例如"my_collection"
 // 返回值: (集合详细信息, 错误信息)
 func (c *client) DescribeCollection(ctx context.Context, collectionName string) (*entity.Collection, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.closed {
-		return nil, errors.New("client is closed")
+	if err := c.gate.acquire(ctx, false); err != nil {
+		return nil, err
 	}
+	defer c.gate.release(false)
 
 	option := milvusclient.NewDescribeCollectionOption(collectionName)
 	return c.cli.DescribeCollection(ctx, option)
@@ -556,12 +609,10 @@ func (c *client) DescribeCollection(ctx context.Context, collectionName string) 
 // collectionName: 集合名称，例如"my_collection"
 // alias: 别名，例如"my_alias"
 func (c *client) CreateAlias(ctx context.Context, collectionName string, alias string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewCreateAliasOption(collectionName, alias)
 	return c.cli.CreateAlias(ctx, option)
@@ -571,12 +622,10 @@ func (c *client) CreateAlias(ctx context.Context, collectionName string, alias s
 // ctx: 上下文，用于控制请求生命周期
 // alias: 要删除的别名，例如"my_alias"
 func (c *client) DropAlias(ctx context.Context, alias string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewDropAliasOption(alias)
 	return c.cli.DropAlias(ctx, option)
@@ -587,15 +636,18 @@ func (c *client) DropAlias(ctx context.Context, alias string) error {
 // collectionName: 集合名称，例如"my_collection"
 // alias: 新的别名，例如"new_alias"
 func (c *client) AlterAlias(ctx context.Context, collectionName string, alias string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return err
 	}
+	defer c.gate.release(true)
 
-	option := milvusclient.NewAlterAliasOption(collectionName, alias)
+	option := newAlterAliasOption(collectionName, alias)
 	return c.cli.AlterAlias(ctx, option)
+}
+
+// newAlterAliasOption 构建修改别名选项。SDK 的参数顺序是 (alias, collectionName)，与本库方法相反
+func newAlterAliasOption(collectionName, alias string) milvusclient.AlterAliasOption {
+	return milvusclient.NewAlterAliasOption(alias, collectionName)
 }
 
 // Compact 压缩集合
@@ -603,12 +655,10 @@ func (c *client) AlterAlias(ctx context.Context, collectionName string, alias st
 // collectionName: 集合名称，例如"my_collection"
 // 返回值: (压缩任务ID, 错误信息)
 func (c *client) Compact(ctx context.Context, collectionName string) (int64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return 0, errors.New("client is closed")
+	if err := c.gate.acquire(ctx, true); err != nil {
+		return 0, err
 	}
+	defer c.gate.release(true)
 
 	option := milvusclient.NewCompactOption(collectionName)
 	return c.cli.Compact(ctx, option)
@@ -617,13 +667,12 @@ func (c *client) Compact(ctx context.Context, collectionName string) (int64, err
 // Close 关闭客户端
 // 返回值: 错误信息
 func (c *client) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return nil
-	}
-
-	c.closed = true
-	return c.cli.Close(context.Background())
+	// 先标记 closing：新请求与等待者立即返回 closed；在途操作结束后才关闭 SDK（仅一次）。
+	// 并发重复调用等待首个 Close 完成后返回 nil。
+	return c.gate.close(func() error {
+		if c.cli == nil {
+			return nil
+		}
+		return c.cli.Close(context.Background())
+	})
 }

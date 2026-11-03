@@ -1,0 +1,168 @@
+package consumer
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"github.com/milvus-io/milvus/client/v2/entity"
+	"github.com/stones-hub/taurus-pro-milvus/pkg/milvus/client"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"runtime/pprof"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestAliasTransfer(t *testing.T) {
+	c := connect(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	prefix := fmt.Sprintf("alias_consumer_%d", time.Now().UnixNano())
+	a, b, alias := prefix+"_a", prefix+"_b", prefix+"_alias"
+	for _, name := range []string{a, b} {
+		s := &entity.Schema{CollectionName: name, Fields: []*entity.Field{{Name: "id", PrimaryKey: true, DataType: entity.FieldTypeInt64}, {Name: "v", DataType: entity.FieldTypeFloatVector, TypeParams: map[string]string{"dim": "2"}}}}
+		must(t, c.CreateCollection(ctx, s, 1))
+		defer c.DropCollection(ctx, name)
+	}
+	must(t, c.CreateAlias(ctx, a, alias))
+	defer c.DropAlias(ctx, alias)
+	ca, e := c.DescribeCollection(ctx, a)
+	must(t, e)
+	cb, e := c.DescribeCollection(ctx, b)
+	must(t, e)
+	before, e := c.DescribeCollection(ctx, alias)
+	must(t, e)
+	if before.ID != ca.ID {
+		t.Fatalf("before alias ID=%d want=%d", before.ID, ca.ID)
+	}
+	must(t, c.AlterAlias(ctx, b, alias))
+	after, e := c.DescribeCollection(ctx, alias)
+	must(t, e)
+	if after.ID != cb.ID || after.ID == ca.ID {
+		t.Fatalf("after ID=%d want B=%d not A=%d", after.ID, cb.ID, ca.ID)
+	}
+	t.Logf("alias %s transferred collection IDs %d -> %d", alias, before.ID, after.ID)
+}
+func TestNonFiniteParams(t *testing.T) {
+	c := connect(t)
+	container := os.Getenv("CANDIDATE_CONTAINER")
+	if container == "" {
+		t.Fatal("missing container")
+	}
+	must(t, exec.Command("docker", "pause", container).Run())
+	defer func() { must(t, exec.Command("docker", "unpause", container).Run()) }()
+	for _, key := range []string{"radius", "range_filter"} {
+		for _, v := range []string{"NaN", "Inf", "-Inf"} {
+			t.Run(key+"_"+v, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				start := time.Now()
+				_, e := c.Search(ctx, "nonexistent_should_not_reach_server", nil, nil, []entity.Vector{entity.FloatVector([]float32{1, 0})}, "v", entity.L2, 1, "", map[string]string{key: v})
+				elapsed := time.Since(start)
+				if e == nil || !strings.Contains(e.Error(), "invalid search param") || !strings.Contains(e.Error(), "non-finite value") {
+					t.Fatalf("wrong local rejection: %v", e)
+				}
+				if elapsed > 200*time.Millisecond {
+					t.Fatalf("not fast local rejection: %s error=%v", elapsed, e)
+				}
+				if strings.Contains(strings.ToLower(e.Error()), "json") {
+					t.Fatalf("server JSON failure: %v", e)
+				}
+				t.Logf("server PAUSED: param=%s value=%s elapsed=%s error=%v", key, v, elapsed, e)
+			})
+		}
+	}
+}
+
+type goroutineSnapshot struct {
+	Total, Reader, Keepalive int
+	Stack                    string
+}
+
+func snapshot() goroutineSnapshot {
+	runtime.GC()
+	var b bytes.Buffer
+	_ = pprof.Lookup("goroutine").WriteTo(&b, 2)
+	s := b.String()
+	return goroutineSnapshot{runtime.NumGoroutine(), strings.Count(s, "(*http2Client).reader("), strings.Count(s, "(*http2Client).keepalive("), s}
+}
+func saveSnapshot(t *testing.T, name string, s goroutineSnapshot) {
+	t.Helper()
+	dir := os.Getenv("EVIDENCE_DIR")
+	if dir == "" {
+		t.Fatal("missing EVIDENCE_DIR")
+	}
+	must(t, os.WriteFile(filepath.Join(dir, name), []byte(s.Stack), 0600))
+}
+func TestHandshakeFailureRegression(t *testing.T) {
+	initial := snapshot()
+	saveSnapshot(t, "goroutines-initial.txt", initial)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	good, e := client.New(ctx, addr(), "", "")
+	cancel()
+	must(t, e)
+	defer good.Close()
+	time.Sleep(200 * time.Millisecond)
+	base := snapshot()
+	saveSnapshot(t, "goroutines-live-baseline.txt", base)
+	for i := 0; i < 30; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		bad, e := client.NewWithOptions(ctx, client.WithAddress(addr()), client.WithDatabase("missing_database_consumer_regression"))
+		cancel()
+		if e == nil {
+			bad.Close()
+			t.Fatalf("attempt %d missing DB unexpectedly accepted", i)
+		}
+		if bad != nil {
+			bad.Close()
+			t.Fatalf("attempt %d returned client on failure", i)
+		}
+		if !strings.Contains(e.Error(), "database not found") {
+			t.Fatalf("attempt %d wrong failure: %v", i, e)
+		}
+		t.Logf("attempt=%d error=%v", i, e)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var after goroutineSnapshot
+	for {
+		after = snapshot()
+		if after.Reader <= base.Reader && after.Keepalive <= base.Keepalive && after.Total <= base.Total+4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	saveSnapshot(t, "goroutines-after-30-failures.txt", after)
+	t.Logf("initial=%d live baseline=%d after30=%d readers=%d->%d keepalive=%d->%d", initial.Total, base.Total, after.Total, base.Reader, after.Reader, base.Keepalive, after.Keepalive)
+	if after.Reader > base.Reader || after.Keepalive > base.Keepalive || after.Total > base.Total+4 {
+		t.Errorf("failed-handshake leak: baseline=%+v after total=%d reader=%d keepalive=%d", struct{ Total, Reader, Keepalive int }{base.Total, base.Reader, base.Keepalive}, after.Total, after.Reader, after.Keepalive)
+	}
+	for i := 0; i < 3; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, e = good.HasCollection(ctx, "missing_consumer_live_connection")
+		cancel()
+		must(t, e)
+	}
+	must(t, good.Close())
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		after = snapshot()
+		if after.Reader <= initial.Reader && after.Keepalive <= initial.Keepalive && after.Total <= initial.Total+4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	saveSnapshot(t, "goroutines-after-normal-close.txt", after)
+	if after.Reader > initial.Reader || after.Keepalive > initial.Keepalive || after.Total > initial.Total+4 {
+		t.Fatalf("normal Close did not settle: initial=%d after=%d readers %d->%d keepalive %d->%d", initial.Total, after.Total, initial.Reader, after.Reader, initial.Keepalive, after.Keepalive)
+	}
+	t.Logf("normal connection survived all failures and 3 RPCs; after Close total=%d reader=%d keepalive=%d", after.Total, after.Reader, after.Keepalive)
+}

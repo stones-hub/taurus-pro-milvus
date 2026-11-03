@@ -1,0 +1,92 @@
+[
+  {
+    "name": "integration",
+    "cwd": "/Users/yelei/data/code/repos/taurus/taurus-pro-milvus",
+    "command": "go test -json -count=1 -timeout=240s ./...",
+    "exit": 0,
+    "seconds": 59.57,
+    "leaf_counts": {
+      "pass": 101,
+      "fail": 0,
+      "skip": 0
+    },
+    "all_counts": {
+      "pass": 128,
+      "fail": 0,
+      "skip": 0
+    },
+    "failures": []
+  },
+  {
+    "name": "integration-race",
+    "cwd": "/Users/yelei/data/code/repos/taurus/taurus-pro-milvus",
+    "command": "go test -race -json -count=1 -timeout=240s ./...",
+    "exit": 0,
+    "seconds": 61.42,
+    "leaf_counts": {
+      "pass": 101,
+      "fail": 0,
+      "skip": 0
+    },
+    "all_counts": {
+      "pass": 128,
+      "fail": 0,
+      "skip": 0
+    },
+    "failures": []
+  },
+  {
+    "name": "consumer-core-race",
+    "cwd": "/tmp/taurus-pro-milvus-round2-4wDwaI/consumer",
+    "command": "go test -race -json -count=1 -timeout=180s -run ^(TestSearchPublicContract|TestConcurrentMustGet50|TestBadConnectionIsolationAndContexts|TestRemoveCloseCreationAndTerminal|TestPauseResume)$ ./...",
+    "exit": 0,
+    "seconds": 12.57,
+    "leaf_counts": {
+      "pass": 8,
+      "fail": 0,
+      "skip": 0
+    },
+    "all_counts": {
+      "pass": 9,
+      "fail": 0,
+      "skip": 0
+    },
+    "failures": []
+  },
+  {
+    "name": "consumer-additional-race",
+    "cwd": "/tmp/taurus-pro-milvus-round2-4wDwaI/consumer",
+    "command": "go test -race -json -count=1 -timeout=120s -run ^(TestAliasTransfer|TestNonFiniteParams)$ ./...",
+    "exit": 0,
+    "seconds": 2.35,
+    "leaf_counts": {
+      "pass": 7,
+      "fail": 0,
+      "skip": 0
+    },
+    "all_counts": {
+      "pass": 8,
+      "fail": 0,
+      "skip": 0
+    },
+    "failures": []
+  },
+  {
+    "name": "handshake-race",
+    "cwd": "/tmp/taurus-pro-milvus-round2-4wDwaI/consumer",
+    "command": "go test -race -json -count=1 -timeout=120s -run ^TestHandshakeFailureRegression$ ./...",
+    "exit": 0,
+    "seconds": 2.59,
+    "leaf_counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    },
+    "all_counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    },
+    "failures": []
+  }
+]

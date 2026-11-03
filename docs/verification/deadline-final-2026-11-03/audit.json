@@ -1,0 +1,57 @@
+{
+  "workspace_matches_manifest": true,
+  "zip_matches_manifest": true,
+  "version": "v0.0.0-candidate.gatefinal.sjercb",
+  "zip_sha256": "00061504bcc6bb1bf31326929628c8ddf4b007a9dbc32b1a04c26368ce9ee989",
+  "candidate_sha256": "b624d3fe085fc938197277887f3d5946eb5670a2d3c92b3bbeee13a1c9d3e53c",
+  "go_version": "go version go1.27.3 darwin/arm64",
+  "git_status": " M README.md\n M pkg/milvus/README.md\n M pkg/milvus/client/README.md\n M pkg/milvus/client/client.go\n M pkg/milvus/client/client_test.go\n M pkg/milvus/pool.go\n M pkg/milvus/pool_test.go\n?? .pi/\n?? HANDOVER.md\n?? docs/\n?? pkg/milvus/client/gate.go\n?? pkg/milvus/client/gate_test.go\n?? pkg/milvus/client/handshake_test.go\n?? pkg/milvus/client/search_option_test.go\n?? pkg/milvus/pool_unit_test.go\n",
+  "tests": {
+    "integration": {
+      "runs": 157,
+      "test_pass": 157,
+      "test_skips": [],
+      "failures": [],
+      "package_skips": [
+        {
+          "Time": "2026-11-03T15:16:11.916707+08:00",
+          "Action": "skip",
+          "Package": "github.com/stones-hub/taurus-pro-milvus/bin",
+          "Elapsed": 0
+        }
+      ],
+      "await_fake_pass": [
+        {
+          "Time": "2026-11-03T15:17:13.451635+08:00",
+          "Action": "pass",
+          "Package": "github.com/stones-hub/taurus-pro-milvus/pkg/milvus/client",
+          "Test": "TestAwaitTimeoutReleasesGate",
+          "Elapsed": 0.71
+        }
+      ]
+    },
+    "integration-race": {
+      "runs": 157,
+      "test_pass": 157,
+      "test_skips": [],
+      "failures": [],
+      "package_skips": [
+        {
+          "Time": "2026-11-03T15:17:15.22874+08:00",
+          "Action": "skip",
+          "Package": "github.com/stones-hub/taurus-pro-milvus/bin",
+          "Elapsed": 0
+        }
+      ],
+      "await_fake_pass": [
+        {
+          "Time": "2026-11-03T15:18:17.562186+08:00",
+          "Action": "pass",
+          "Package": "github.com/stones-hub/taurus-pro-milvus/pkg/milvus/client",
+          "Test": "TestAwaitTimeoutReleasesGate",
+          "Elapsed": 0.71
+        }
+      ]
+    }
+  }
+}

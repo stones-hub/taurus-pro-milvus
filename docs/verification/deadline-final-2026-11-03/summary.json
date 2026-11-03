@@ -1,0 +1,672 @@
+{
+  "integration": {
+    "actions": {
+      "start": 3,
+      "output": 326,
+      "skip": 1,
+      "run": 157,
+      "pass": 159
+    },
+    "failed": []
+  },
+  "integration-race": {
+    "actions": {
+      "start": 3,
+      "output": 326,
+      "skip": 1,
+      "run": 157,
+      "pass": 159
+    },
+    "failed": []
+  },
+  "checks": [
+    {
+      "data": {
+        "case": "load-has",
+        "error": "context deadline exceeded",
+        "ms": 501.546,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:25.828429Z"
+    },
+    {
+      "data": {
+        "case": "load-query",
+        "error": "context deadline exceeded",
+        "ms": 502.187,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:26.331141Z"
+    },
+    {
+      "data": {
+        "case": "load-search",
+        "error": "context deadline exceeded",
+        "ms": 502.222,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:26.833829Z"
+    },
+    {
+      "data": {
+        "case": "load-active-cancel",
+        "error": "context canceled",
+        "ms": 0.094,
+        "pass": true,
+        "want": "context canceled"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:26.88466Z"
+    },
+    {
+      "data": {
+        "case": "load-db-wait-cancel",
+        "error": "context deadline exceeded",
+        "ms": 501.271,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:27.386488Z"
+    },
+    {
+      "data": {
+        "case": "index-has",
+        "error": "context deadline exceeded",
+        "ms": 502.056,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:28.334586Z"
+    },
+    {
+      "data": {
+        "case": "index-query",
+        "error": "context deadline exceeded",
+        "ms": 502.259,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:28.837385Z"
+    },
+    {
+      "data": {
+        "case": "index-search",
+        "error": "context deadline exceeded",
+        "ms": 502.208,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:29.339949Z"
+    },
+    {
+      "data": {
+        "case": "index-active-cancel",
+        "error": "context canceled",
+        "ms": 0.06,
+        "pass": true,
+        "want": "context canceled"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:29.392412Z"
+    },
+    {
+      "data": {
+        "case": "index-db-wait-cancel",
+        "error": "context deadline exceeded",
+        "ms": 502.178,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:29.894977Z"
+    },
+    {
+      "data": {
+        "case": "load-has",
+        "error": "context deadline exceeded",
+        "ms": 502.19,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:30.752426Z"
+    },
+    {
+      "data": {
+        "case": "load-query",
+        "error": "context deadline exceeded",
+        "ms": 502.178,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:31.255064Z"
+    },
+    {
+      "data": {
+        "case": "load-search",
+        "error": "context deadline exceeded",
+        "ms": 502.191,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:31.757755Z"
+    },
+    {
+      "data": {
+        "case": "load-active-cancel",
+        "error": "context canceled",
+        "ms": 0.101,
+        "pass": true,
+        "want": "context canceled"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:31.81035Z"
+    },
+    {
+      "data": {
+        "case": "load-db-wait-cancel",
+        "error": "context deadline exceeded",
+        "ms": 502.153,
+        "pass": true,
+        "want": "context deadline exceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:32.31294Z"
+    },
+    {
+      "data": {
+        "error": "client is closed",
+        "ms": 0,
+        "pass": true
+      },
+      "event": "close_reject",
+      "time": "2026-11-03T07:18:32.314747Z"
+    },
+    {
+      "data": {
+        "after_error": "<nil>",
+        "after_has": true,
+        "expected_database": "gate_actualdb",
+        "initial_has": true,
+        "pass": true,
+        "switch_error": "database not found[database=gate_db_does_not_exist]"
+      },
+      "event": "url_db_rollback",
+      "time": "2026-11-03T07:18:32.576408Z"
+    },
+    {
+      "data": {
+        "case": "db-rpc-cancel",
+        "error": "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+        "errors_is_ctx": false,
+        "ms": 502.757,
+        "pass": true,
+        "phase": "RPC",
+        "status_code": "DeadlineExceeded"
+      },
+      "event": "gate_assert",
+      "time": "2026-11-03T07:18:33.135387Z"
+    },
+    {
+      "data": {
+        "pass": true
+      },
+      "event": "db_cancel_state",
+      "time": "2026-11-03T07:18:33.193449Z"
+    },
+    {
+      "data": {
+        "kind": "graceful-restart",
+        "query_exact_id_vector": true,
+        "same_instance": true,
+        "search_exact_id_score": true,
+        "seconds": 14.430387875
+      },
+      "event": "fault_recovered",
+      "time": "2026-11-03T07:18:48.67941Z"
+    },
+    {
+      "data": {
+        "kind": "kill-start",
+        "query_exact_id_vector": true,
+        "same_instance": true,
+        "search_exact_id_score": true,
+        "seconds": 15.812439458
+      },
+      "event": "fault_recovered",
+      "time": "2026-11-03T07:19:08.378456Z"
+    },
+    {
+      "data": {
+        "elapsed_s": 305.043746167,
+        "failures": 0
+      },
+      "event": "soak_end",
+      "time": "2026-11-03T07:24:26.673391Z"
+    },
+    {
+      "data": {
+        "failures": 0
+      },
+      "event": "complete",
+      "time": "2026-11-03T07:24:31.201603Z"
+    }
+  ],
+  "phases": {
+    "baseline-1": {
+      "query": {
+        "n": 1378,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 0.678,
+        "p95_ms": 1.499,
+        "p99_ms": 1.954,
+        "max_ms": 6.027,
+        "error_examples": []
+      },
+      "search": {
+        "n": 4135,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 0.732,
+        "p95_ms": 1.616,
+        "p99_ms": 2.083,
+        "max_ms": 5.384,
+        "error_examples": []
+      }
+    },
+    "baseline-8": {
+      "query": {
+        "n": 6812,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 1.143,
+        "p95_ms": 2.014,
+        "p99_ms": 2.824,
+        "max_ms": 9.763,
+        "error_examples": []
+      },
+      "search": {
+        "n": 20437,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 1.304,
+        "p95_ms": 2.166,
+        "p99_ms": 3.001,
+        "max_ms": 12.461,
+        "error_examples": []
+      }
+    },
+    "fault-graceful-restart": {
+      "has": {
+        "n": 88,
+        "errors": 9,
+        "overruns": 0,
+        "p50_ms": 2.992,
+        "p95_ms": 501.433,
+        "p99_ms": 502.164,
+        "max_ms": 502.169,
+        "error_examples": [
+          "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+          "context deadline exceeded"
+        ]
+      },
+      "pool_existing": {
+        "n": 88,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 0.005,
+        "p95_ms": 0.008,
+        "p99_ms": 0.01,
+        "max_ms": 0.025,
+        "error_examples": []
+      }
+    },
+    "fault-kill-start": {
+      "has": {
+        "n": 91,
+        "errors": 77,
+        "overruns": 0,
+        "p50_ms": 2.521,
+        "p95_ms": 501.93,
+        "p99_ms": 502.163,
+        "max_ms": 502.273,
+        "error_examples": [
+          "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+          "context deadline exceeded",
+          "rpc error: code = Unknown desc = service unavailable: internal: Milvus Proxy is not ready yet. please wait"
+        ]
+      },
+      "pool_existing": {
+        "n": 91,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 0.006,
+        "p95_ms": 0.008,
+        "p99_ms": 0.01,
+        "max_ms": 0.014,
+        "error_examples": []
+      }
+    },
+    "soak": {
+      "client_create_close": {
+        "n": 61,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 10.193,
+        "p95_ms": 18.13,
+        "p99_ms": 25.534,
+        "max_ms": 25.848,
+        "error_examples": []
+      },
+      "delete": {
+        "n": 305,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 2.902,
+        "p95_ms": 6.239,
+        "p99_ms": 8.834,
+        "max_ms": 14.298,
+        "error_examples": []
+      },
+      "insert": {
+        "n": 305,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 5.528,
+        "p95_ms": 9.07,
+        "p99_ms": 11.462,
+        "max_ms": 19.395,
+        "error_examples": []
+      },
+      "query": {
+        "n": 5650,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 6.29,
+        "p95_ms": 8.169,
+        "p99_ms": 10.693,
+        "max_ms": 15.829,
+        "error_examples": []
+      },
+      "search": {
+        "n": 16950,
+        "errors": 0,
+        "overruns": 0,
+        "p50_ms": 6.442,
+        "p95_ms": 8.389,
+        "p99_ms": 11.144,
+        "max_ms": 17.948,
+        "error_examples": []
+      }
+    }
+  },
+  "resources": [
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"922kB / 8.12MB\",\"CPUPerc\":\"4.68%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"4.43%\",\"MemUsage\":\"351.3MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"512kB / 276kB\",\"PIDs\":\"47\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 9,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 3225416,
+        "rss_kib": "76240",
+        "tag": "before-graceful-restart"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:18:34.247853Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"168kB / 463kB\",\"CPUPerc\":\"4.05%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"3.04%\",\"MemUsage\":\"241.5MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"49.4kB / 56.5kB\",\"PIDs\":\"41\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 9,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4502008,
+        "rss_kib": "82384",
+        "tag": "after-graceful-restart"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:18:50.556026Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"168kB / 463kB\",\"CPUPerc\":\"4.62%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"3.07%\",\"MemUsage\":\"244MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"49.4kB / 56.5kB\",\"PIDs\":\"41\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 9,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 3770152,
+        "rss_kib": "81808",
+        "tag": "before-kill-start"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:18:52.564839Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"65.5kB / 283kB\",\"CPUPerc\":\"4.46%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"3.39%\",\"MemUsage\":\"269.1MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"43.3kB / 40.2kB\",\"PIDs\":\"45\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 9,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4244176,
+        "rss_kib": "83152",
+        "tag": "after-kill-start"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:19:09.547672Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"65.5kB / 369kB\",\"CPUPerc\":\"3.69%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"4.37%\",\"MemUsage\":\"346.7MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"3.16MB / 2.38MB\",\"PIDs\":\"45\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 9,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4291080,
+        "rss_kib": "88832",
+        "tag": "baseline-1"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:19:15.596958Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 410kB\",\"CPUPerc\":\"3.50%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.15%\",\"MemUsage\":\"408.8MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"13.8MB / 9.48MB\",\"PIDs\":\"65\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 9,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4177664,
+        "rss_kib": "98656",
+        "tag": "baseline-8"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:19:21.626257Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 786kB\",\"CPUPerc\":\"22.77%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.13%\",\"MemUsage\":\"407.1MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"14.7MB / 10.1MB\",\"PIDs\":\"67\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 3823352,
+        "rss_kib": "99312",
+        "tag": "soak-001"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:19:52.691144Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 1.13MB\",\"CPUPerc\":\"20.18%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.14%\",\"MemUsage\":\"407.7MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"15.5MB / 10.6MB\",\"PIDs\":\"69\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4701120,
+        "rss_kib": "102464",
+        "tag": "soak-002"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:20:22.691085Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 1.47MB\",\"CPUPerc\":\"20.49%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.14%\",\"MemUsage\":\"407.7MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"16.3MB / 11.2MB\",\"PIDs\":\"68\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 2976296,
+        "rss_kib": "103008",
+        "tag": "soak-003"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:20:52.69417Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 1.81MB\",\"CPUPerc\":\"19.02%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.15%\",\"MemUsage\":\"408.8MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"17.2MB / 11.7MB\",\"PIDs\":\"67\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4598320,
+        "rss_kib": "103072",
+        "tag": "soak-004"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:21:22.690067Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 2.14MB\",\"CPUPerc\":\"27.40%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.13%\",\"MemUsage\":\"406.9MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"18MB / 12.3MB\",\"PIDs\":\"69\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4307040,
+        "rss_kib": "104208",
+        "tag": "soak-005"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:21:52.689888Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 2.48MB\",\"CPUPerc\":\"21.13%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.13%\",\"MemUsage\":\"406.8MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"18.8MB / 12.8MB\",\"PIDs\":\"67\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4474752,
+        "rss_kib": "104304",
+        "tag": "soak-006"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:22:22.687522Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 2.8MB\",\"CPUPerc\":\"20.27%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.13%\",\"MemUsage\":\"407.3MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"19.7MB / 13.4MB\",\"PIDs\":\"68\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4248768,
+        "rss_kib": "105536",
+        "tag": "soak-007"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:22:52.694007Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 3.13MB\",\"CPUPerc\":\"23.86%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.12%\",\"MemUsage\":\"406.4MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"20.5MB / 14MB\",\"PIDs\":\"68\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4724728,
+        "rss_kib": "105424",
+        "tag": "soak-008"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:23:22.694548Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 3.49MB\",\"CPUPerc\":\"20.07%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.12%\",\"MemUsage\":\"406.5MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"21.3MB / 14.5MB\",\"PIDs\":\"69\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 3468168,
+        "rss_kib": "105616",
+        "tag": "soak-009"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:23:52.698243Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 3.92MB\",\"CPUPerc\":\"8.20%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"5.11%\",\"MemUsage\":\"405.9MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"22.2MB / 15.1MB\",\"PIDs\":\"69\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 20,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4162200,
+        "rss_kib": "103616",
+        "tag": "soak-010"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:24:22.681211Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 4.12MB\",\"CPUPerc\":\"11.10%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"4.74%\",\"MemUsage\":\"376.3MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"22.3MB / 15.2MB\",\"PIDs\":\"68\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 9,
+        "grpc_keepalive": 1,
+        "grpc_readers": 1,
+        "heap_alloc": 4118872,
+        "rss_kib": "103760",
+        "tag": "soak-end"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:24:28.148543Z"
+    },
+    {
+      "data": {
+        "docker_stats": "{\"BlockIO\":\"131kB / 4.15MB\",\"CPUPerc\":\"5.07%\",\"Container\":\"taurus-gatefinal-sjercb\",\"ID\":\"098eda57492d\",\"MemPerc\":\"4.77%\",\"MemUsage\":\"378.8MiB / 7.75GiB\",\"Name\":\"taurus-gatefinal-sjercb\",\"NetIO\":\"22.3MB / 15.2MB\",\"PIDs\":\"68\"}\n",
+        "docker_stats_error": "<nil>",
+        "goroutines": 3,
+        "grpc_keepalive": 0,
+        "grpc_readers": 0,
+        "heap_alloc": 2633784,
+        "rss_kib": "103920",
+        "tag": "closed"
+      },
+      "event": "sample",
+      "time": "2026-11-03T07:24:31.200544Z"
+    }
+  ],
+  "candidate_hash": "b624d3fe085fc938197277887f3d5946eb5670a2d3c92b3bbeee13a1c9d3e53c",
+  "zip_hash": "00061504bcc6bb1bf31326929628c8ddf4b007a9dbc32b1a04c26368ce9ee989"
+}

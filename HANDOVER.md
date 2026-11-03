@@ -28,7 +28,7 @@ Claude Code，经run-claude，请求sonnet，wrapper证明实际模型claude-son
 
 未访问113/SSH/生产服务；本机专属Milvus容器/卷/网络已删除，Pi再次核实。三处本次/tmp证据工装目录、合成模块缓存清理完成；未删除其他项目资源。
 
-用户已明确授权commit、发布、打tag及Release，并选择v0.2.0；范围包括推送main和tag、创建正式GitHub Release，不包括服务部署。发布执行中，最终状态以Git/GitHub核验为准。无服务需要在113重启（未部署）。
+用户已明确授权commit、推送main、打tag及正式GitHub Release，选择v0.2.0。发布代码提交 `2a18203` 已推送origin/main；annotated tag `v0.2.0` 已推送并指向该提交；正式Release已创建：https://github.com/stones-hub/taurus-pro-milvus/releases/tag/v0.2.0 。本交接的后续文档状态提交不改变发布tag。未部署服务，113未安装或重启任何服务。
 
 ## 新启动：离线专项验证
 
@@ -53,6 +53,6 @@ Claude Code，经run-claude，请求sonnet，wrapper证明实际模型claude-son
 - 最终真实验收已完成并由Pi直接核查日志和当前Go/mod/LICENSE manifest一致：全量集成/race各157条测试pass、0fail/0test skip（bin无测试只有包级skip）；URL回滚与显式库优先通过；500ms读等待501.546–502.259ms返回；Close安全；真实Await进入后取消/释放通过；restart14.430s、kill/start15.812s原连接恢复；新305.044秒23271请求正常0错/0超预算。最新报告 `docs/client-deadline-acceptance.md`，结果及参考consumer在 `docs/verification/deadline-final-2026-11-03/`。
 - 最终独立review session `e093fb2a-977b-440e-a1c9-dd4b86538795`，wrapper证明claude-sonnet-5-5，正常路径未发现确定性缺陷。
 - 本任务三处/tmp工装/执行器证据目录及两个合成模块缓存已定向清理；必要证据先固化。专属容器/卷/网络已删除，Pi再次核实查询为空；未碰113。较早认证/TLS及30分钟结果属于旧候选，本次未重跑这些完整专项，必须明确边界。
-- 当前没有运行中的验收/编码任务；本次修复验收完成。用户已授权v0.2.0提交/推送/tag/Release，发布执行中；未授权服务部署。发布说明 `docs/releases/v0.2.0.md`。
+- 当前没有运行中的验收/编码任务；本次修复验收及v0.2.0源码发布完成。发布说明 `docs/releases/v0.2.0.md`。下一步可在使用方指定v0.2.0接入，不需要为了验收部署服务；若再修改代码需重新验证并发新版本，不移动现有tag。
 
 续接：“继续taurus-pro-milvus交付，先读HANDOVER和生产整改验收报告。”

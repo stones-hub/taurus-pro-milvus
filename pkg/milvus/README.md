@@ -6,12 +6,16 @@
 
 ```
 pkg/milvus/
-├── pool.go      # 连接池实现
-├── pool_test.go # 连接池测试
-└── client/      # 客户端包
+├── pool.go            # 连接池实现
+├── pool_test.go       # 连接池集成测试
+├── pool_unit_test.go  # 连接池单元测试
+├── pool_default_test.go # 池默认创建的客户端只读恢复（fake gRPC）
+└── client/            # 客户端包
     ├── client.go
+    ├── gate.go        # 可取消等待的读写门禁
+    ├── recovery.go    # Search/Query 只读恢复（默认启用）
     ├── options.go
-    └── client_test.go
+    └── *_test.go
 ```
 
 ## 核心接口
@@ -269,6 +273,7 @@ if err != nil {
 - 建连默认超时 `DefaultCreateTimeout`（10 秒），可用 `WithCreateTimeout` 调整。
 - `Pool` 接口保持不变。需要 context 控制时使用 `NewContextPool`，其 `AddContext` / `MustGetContext` 在 ctx 取消或超时时立即返回；等待同一次创建的调用方可各自独立取消，最后一个等待者离开时创建被取消。
 - `Remove` 正在创建的名称会取消创建；`Remove` 在池锁之外关闭客户端。
+- 池创建的客户端与 `client.New`/`NewWithOptions` 一样**默认启用**只读恢复（仅 `Search`/`Query`，单次调用最多 60 秒），无需额外选项；需要关闭时按客户端传入 `client.WithReadRecovery(false)`（如 `pool.Add("raw", client.WithAddress(...), client.WithReadRecovery(false))`）。恢复在客户端对象内部替换底层连接，`Get`/`MustGet` 返回的对象保持不变、继续可用，无需 `Remove`/`Add`；但先前取得的 `GetClient()` 裸句柄不会透明恢复，也不得与恢复并发使用。详见[客户端文档](./client/README.md#只读恢复默认启用)。
 
 ```go
 pool := milvus.NewContextPool(milvus.WithCreateTimeout(5 * time.Second))

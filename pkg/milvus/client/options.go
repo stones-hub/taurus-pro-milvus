@@ -35,6 +35,10 @@ type Options struct {
 
 	// 其他配置
 	DisableConn bool // 是否禁用连接握手，true时跳过向Milvus服务器发送ConnectRequest，通常用于测试或特殊场景
+
+	// 只读恢复配置（默认启用，WithReadRecovery(false) 关闭）
+	ReadRecovery         bool                    // 是否对 Search/Query 启用只读恢复
+	ReadRecoveryObserver func(ReadRecoveryEvent) // 可选：启用恢复时 Search/Query 除首次直接成功外的每次调用结束时同步回调一次，须并发安全且不阻塞
 }
 
 // DefaultOptions 返回默认配置
@@ -59,6 +63,8 @@ func DefaultOptions() *Options {
 		MaxRecvMsgSize:      math.MaxInt32, // 2GB - 1
 
 		DisableConn: false,
+
+		ReadRecovery: true, // 默认对 Search/Query 启用只读恢复（受 60 秒预算约束）
 	}
 }
 
@@ -151,5 +157,31 @@ func WithGrpcOpts(
 func WithDisableConn(disable bool) Option {
 	return func(o *Options) {
 		o.DisableConn = disable
+	}
+}
+
+// WithReadRecovery 设置是否对 Search/Query 启用只读恢复（默认启用；传 false 关闭，关闭时 Search/Query 单次执行并原样返回错误，
+// Close 等待在途查询自然结束）。与其他选项一样按传入顺序生效，后者覆盖前者。
+// 启用时仅对经确认的暂时性故障（连接中断、服务未就绪/暂不可用、重启后查询分发尚未可服务、通道 tSafe 滞后）
+// 间隔 ReadRecoveryInterval 重建底层连接并重试；自调用开始的总预算 ReadRecoveryBudget 覆盖首次查询在内的全部阶段，
+// 且服从调用方 ctx；Close 会取消进行中的 Search/Query。写操作及其他方法从不自动重试。详见 README "只读恢复"。
+func WithReadRecovery(enable bool) Option {
+	return func(o *Options) {
+		o.ReadRecovery = enable
+	}
+}
+
+// WithReadRecoveryObserver 设置只读恢复观察回调，用于记录 Search/Query 的失败与恢复结果（恢复成功时首次失败只能经此获得）。
+// 启用恢复时，首次查询直接成功不回调；其余每次调用（任一出口失败，或经恢复成功）在返回前恰好回调一次，
+// 包括首次即不可恢复、调用方 ctx 结束、首次门禁等待失败等原样返回错误的情况，ReadRecoveryEvent 注释说明如何区分。
+// 回调在查询调用的 goroutine 中同步执行，可能被多个查询并发调用：必须并发安全、不得阻塞；
+// 其耗时不计入恢复预算也不受调用方 ctx 约束，panic 会传到查询调用方；未启用恢复时设置无效、从不回调。
+// 本库不在事件中加入认证信息、向量或过滤表达式，但不对错误与集合名脱敏：FirstErr/Err 为服务端/SDK 原样错误，
+// Collection 为调用方传入的原值（未转义，可能含敏感标识或换行）。记录日志时默认只记录固定的 Op、
+// 经 errors.Is 白名单得到的错误分类（status.Code 无法区分 Milvus 业务错误码）、Attempts、Elapsed，
+// 不要输出错误原文或 Collection；确需区分集合时由调用方映射为安全标识，见 ReadRecoveryEvent
+func WithReadRecoveryObserver(fn func(ReadRecoveryEvent)) Option {
+	return func(o *Options) {
+		o.ReadRecoveryObserver = fn
 	}
 }

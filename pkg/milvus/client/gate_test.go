@@ -321,10 +321,25 @@ func shortCtx(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
 }
 
+// recoveryModes 让涉及 Query/Search 的门禁测试同时覆盖默认（启用只读恢复）与显式关闭两种配置，断言完全相同
+var recoveryModes = []struct {
+	name string
+	opts []Option
+}{
+	{"默认启用恢复", nil},
+	{"显式关闭恢复", []Option{WithReadRecovery(false)}},
+}
+
 // 长写 RPC 占用期间，短 deadline / 主动取消的读与写在预算内返回 ctx 错误，且不产生任何服务端 RPC
 func TestShortDeadlineNotBlockedByLongWrite(t *testing.T) {
+	for _, m := range recoveryModes {
+		t.Run(m.name, func(t *testing.T) { testShortDeadlineNotBlockedByLongWrite(t, m.opts...) })
+	}
+}
+
+func testShortDeadlineNotBlockedByLongWrite(t *testing.T, opts ...Option) {
 	f := &lockFake{loadGate: make(chan struct{}), loadEnter: make(chan struct{}, 1)}
-	c := newLockClient(t, f)
+	c := newLockClient(t, f, opts...)
 
 	loadDone := make(chan error, 1)
 	go func() { loadDone <- c.LoadCollection(context.Background(), "c") }()
@@ -414,8 +429,14 @@ func TestWriteWaitCancellableBehindRead(t *testing.T) {
 
 // Close 等待在途长操作期间：新请求立即 closed，GetClient 为 nil；释放后 Close 完成，重复 Close 安全
 func TestCloseWaitsForInflightAndRejectsNew(t *testing.T) {
+	for _, m := range recoveryModes {
+		t.Run(m.name, func(t *testing.T) { testCloseWaitsForInflightAndRejectsNew(t, m.opts...) })
+	}
+}
+
+func testCloseWaitsForInflightAndRejectsNew(t *testing.T, opts ...Option) {
 	f := &lockFake{loadGate: make(chan struct{}), loadEnter: make(chan struct{}, 1)}
-	c := newLockClient(t, f)
+	c := newLockClient(t, f, opts...)
 	require.NotNil(t, c.GetClient())
 
 	loadDone := make(chan error, 1)

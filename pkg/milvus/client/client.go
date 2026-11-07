@@ -70,10 +70,15 @@ type Client interface {
 // 等待阶段受 ctx 控制，取消/超时立即返回 ctx 错误且不发 RPC；RPC（含 Await）期间持有门禁，
 // 以保证 UseDatabase 不与其他操作交错，且 Close 不与仍在运行的 SDK 调用竞争。
 // gate 内部只有一把仅保护内存状态的互斥锁，不跨 RPC，无锁顺序问题。
+//
+// 启用只读恢复时 cli 可被内部重建替换：替换只在持有写门禁时进行（此时没有经本库的在途请求），
+// 另持 cliMu 以便不经门禁的 GetClient 安全读取。cliMu 仅保护指针读写，不跨 RPC。
 type client struct {
-	cli  *milvusclient.Client
-	gate gate
-	db   string // 当前数据库名，仅在持有写门禁时读写，用于 UseDatabase 失败时回滚 SDK 状态
+	cli   *milvusclient.Client
+	cliMu sync.RWMutex
+	gate  gate
+	db    string    // 当前数据库名，仅在持有写门禁时写入，用于 UseDatabase 失败时回滚 SDK 状态及恢复重建
+	rec   *recovery // 只读恢复状态，未启用时为 nil
 }
 
 // New 创建新的客户端实例
@@ -94,6 +99,25 @@ func NewWithOptions(ctx context.Context, opts ...Option) (Client, error) {
 	for _, opt := range opts {
 		opt(options)
 	}
+
+	cli, dbName, err := dialSDK(ctx, options)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create milvus client")
+	}
+
+	c := &client{
+		cli: cli,
+		db:  dbName, // SDK 解析后的库名：显式库优先，否则取自地址 URL 路径
+	}
+	if options.ReadRecovery {
+		c.rec = newRecovery(*options)
+	}
+	return c, nil
+}
+
+// dialSDK 按 options 建立 SDK 客户端并完成握手（受 ctx 限时），返回 SDK 解析后的库名。
+// 首次创建与只读恢复重建共用此函数，保证认证、数据库、TLS、拨号等配置完全一致。
+func dialSDK(ctx context.Context, options *Options) (*milvusclient.Client, string, error) {
 	// 构建 milvusclient.ClientConfig
 	config := &milvusclient.ClientConfig{
 		Address:       options.Address,
@@ -152,14 +176,11 @@ func NewWithOptions(ctx context.Context, opts ...Option) (Client, error) {
 	cli, err := milvusclient.New(ctx, config)
 	if err != nil {
 		capture.release(true)
-		return nil, errors.Wrap(err, "failed to create milvus client")
+		return nil, "", err
 	}
 	capture.release(false)
 
-	return &client{
-		cli: cli,
-		db:  config.DBName, // SDK 解析后的库名：显式库优先，否则取自地址 URL 路径
-	}, nil
+	return cli, config.DBName, nil
 }
 
 // connCapture 仅在 milvusclient.New 执行期间记录 grpc 连接，结束后不保留连接引用
@@ -194,11 +215,17 @@ func (c *connCapture) release(closeConn bool) {
 // 返回值: 原始Milvus客户端实例，如果客户端已关闭（或正在关闭）则返回nil
 // 该方法不等待任何在途操作。返回的裸 SDK 句柄不受本库同步保护：
 // 调用方不得让它与 Close 或 UseDatabase 并发使用。
+// 启用只读恢复时（默认启用），任何并发的 Search/Query 都可能触发内部重建，在裸句柄调用途中将其关闭
+// （SDK 的 Close 无锁清空内部连接字段，与并发调用构成数据竞争，不只是返回错误）；
+// 重新获取指针只能避开已完成的替换，不能保护随后在途的调用。因此启用恢复时本库不为裸句柄提供并发安全保证，也不承诺裸句柄透明恢复：
+// 需要裸 SDK 能力时请使用以 WithReadRecovery(false) 创建的独立客户端，或由调用方确保使用期间没有并发的 Search/Query/Close/UseDatabase。
 func (c *client) GetClient() *milvusclient.Client {
 	if c.gate.isClosing() {
 		return nil
 	}
 
+	c.cliMu.RLock()
+	defer c.cliMu.RUnlock()
 	return c.cli
 }
 
@@ -451,17 +478,23 @@ func (c *client) Delete(ctx context.Context, collectionName string, partitionNam
 // expr: 过滤条件表达式，空字符串表示无过滤条件，例如"id > 0"
 // params: 搜索参数，例如map[string]string{"nprobe": "10"}
 // 返回值: (搜索结果列表, 错误信息)
+// 启用只读恢复时，暂时性故障按 README "只读恢复" 处理；恢复后的结果须通过数量与解析校验
 func (c *client) Search(ctx context.Context, collectionName string, partitionNames []string, outputFields []string, vectors []entity.Vector, vectorField string, metricType entity.MetricType, topK int, expr string, params map[string]string) ([]milvusclient.ResultSet, error) {
-	if err := c.gate.acquire(ctx, false); err != nil {
-		return nil, err
-	}
-	defer c.gate.release(false)
-
-	option, err := buildSearchOption(collectionName, partitionNames, outputFields, vectors, vectorField, metricType, topK, expr, params)
+	var results []milvusclient.ResultSet
+	err := c.read(ctx, "Search", collectionName, partitionNames, func(ctx context.Context, cli *milvusclient.Client) error {
+		option, err := buildSearchOption(collectionName, partitionNames, outputFields, vectors, vectorField, metricType, topK, expr, params)
+		if err != nil {
+			return err
+		}
+		results, err = cli.Search(ctx, option)
+		return err
+	}, func() error {
+		return validateSearchResults(results, len(vectors))
+	})
 	if err != nil {
 		return nil, err
 	}
-	return c.cli.Search(ctx, option)
+	return results, nil
 }
 
 // buildSearchOption 将 Search 的公开参数转换为 SDK 搜索选项
@@ -518,26 +551,32 @@ func parseParamValue(v string) (any, error) {
 // expr: 查询条件表达式，例如"id > 0"、"text like 'test%'"、"id in [1,2,3]"
 // outputFields: 输出字段列表，例如[]string{"text", "id"}
 // 返回值: (查询结果列数据, 错误信息)
+// 启用只读恢复时，暂时性故障按 README "只读恢复" 处理；恢复后的结果须通过列长度一致性校验
 func (c *client) Query(ctx context.Context, collectionName string, partitionNames []string, expr string, outputFields []string) ([]column.Column, error) {
-	if err := c.gate.acquire(ctx, false); err != nil {
-		return nil, err
-	}
-	defer c.gate.release(false)
+	var columns []column.Column
+	err := c.read(ctx, "Query", collectionName, partitionNames, func(ctx context.Context, cli *milvusclient.Client) error {
+		option := milvusclient.NewQueryOption(collectionName).
+			WithPartitions(partitionNames...).
+			WithFilter(expr).
+			WithOutputFields(outputFields...)
 
-	option := milvusclient.NewQueryOption(collectionName).
-		WithPartitions(partitionNames...).
-		WithFilter(expr).
-		WithOutputFields(outputFields...)
+		resultSet, err := cli.Query(ctx, option)
+		if err != nil {
+			return err
+		}
 
-	resultSet, err := c.cli.Query(ctx, option)
+		// 将ResultSet转换为Column数组
+		var cols []column.Column
+		for _, field := range resultSet.Fields {
+			cols = append(cols, field)
+		}
+		columns = cols
+		return nil
+	}, func() error {
+		return validateQueryColumns(columns)
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	// 将ResultSet转换为Column数组
-	var columns []column.Column
-	for _, field := range resultSet.Fields {
-		columns = append(columns, field)
 	}
 	return columns, nil
 }
@@ -667,8 +706,15 @@ func (c *client) Compact(ctx context.Context, collectionName string) (int64, err
 // Close 关闭客户端
 // 返回值: 错误信息
 func (c *client) Close() error {
+	// 先终止进行中的只读恢复（含启用恢复时首次进行中的 Search/Query），使其不再拖住在途计数；
+	// 再等待已开始的重建结束（其 ctx 已取消，握手/门禁等待及时返回；它不持有门禁，不会与下面的等待互锁），
+	// 使未安装的候选 SDK 客户端在 Close 返回前已关闭、已安装的由下面统一关闭。
 	// 先标记 closing：新请求与等待者立即返回 closed；在途操作结束后才关闭 SDK（仅一次）。
-	// 并发重复调用等待首个 Close 完成后返回 nil。
+	// 并发重复调用等待首个 Close 完成后返回 nil。内部重建从不调用本方法。
+	if c.rec != nil {
+		c.rec.stop()
+		c.rec.waitRebuild()
+	}
 	return c.gate.close(func() error {
 		if c.cli == nil {
 			return nil

@@ -7,8 +7,10 @@
 ```
 pkg/milvus/client/
 ├── client.go      # 客户端实现和接口定义
+├── gate.go        # 可取消等待的读写门禁
+├── recovery.go    # Search/Query 只读恢复（默认启用）
 ├── options.go     # 配置选项和选项函数
-└── client_test.go # 单元测试
+└── *_test.go      # 单元测试（fake gRPC）与集成测试
 ```
 
 ## 核心接口
@@ -102,6 +104,8 @@ cli, err := client.NewWithOptions(ctx,
 | `WithDatabase` | `dbName string` | 数据库名称 | `"my_database"` |
 | `WithTLS` | 无 | 启用TLS | `client.WithTLS()` |
 | `WithRetry` | `maxRetry uint, maxBackoff time.Duration` | 兼容性入口：当前 SDK v2.6.5 不应用此配置，不能据此控制实际重试 | `5, 3*time.Second` |
+| `WithReadRecovery` | `enable bool` | Search/Query 只读恢复开关，**默认启用**；传 `false` 关闭。见下文"只读恢复" | `false` |
+| `WithReadRecoveryObserver` | `fn func(ReadRecoveryEvent)` | Search/Query 失败与恢复结果回调（首次直接成功除外，每次调用一次） | 见下文 |
 
 ### 高级GRPC配置
 
@@ -315,7 +319,135 @@ if err != nil {
 - `UseDatabase` 与其他操作互斥；若切换失败（含连接握手失败或超时），SDK 内部的当前库会回滚为切换前的库（记录的是 SDK 解析后的库名：`WithDatabase` 显式值优先，为空时取自 `WithAddress` URL 路径中的库名）。
 - 错误契约分两阶段：**等待门禁**阶段的取消/超时返回 context 错误（`errors.Is(err, context.Canceled/DeadlineExceeded)` 成立）；**已发出的 RPC**（含 Await 轮询）沿用 SDK/gRPC 错误，超时表现为 gRPC status `DeadlineExceeded`，`errors.Is(err, context.DeadlineExceeded)` 不保证成立，调用方应结合 `status.Code(err)` 判断。
 - `Close()` 无 ctx：先拒绝新请求并唤醒所有等待者（返回 `client is closed`），再等待在途操作结束后仅关闭一次 SDK；并发重复调用等待首次关闭完成后返回 nil。`GetClient()` 不阻塞，关闭开始后返回 nil。
-- `GetClient()` 返回的裸 SDK 句柄不受上述同步保护，调用方不得让它与 `Close` / `UseDatabase` 并发使用。
+- `GetClient()` 返回的裸 SDK 句柄不受上述同步保护，调用方不得让它与 `Close` / `UseDatabase` 并发使用。只读恢复默认启用，此时还不得与 `Search` / `Query` 并发使用，见下文。
+
+## 只读恢复（默认启用）
+
+Milvus 正常重启后，已有连接可能中断，首次检索也可能返回 `channel distribution is not serviceable`（错误码 503）或 `channel tsafe stalled`（错误码 505）。`New`、`NewWithOptions` 以及连接池 `Add`/`MustGet` 创建的客户端**默认启用**只读恢复，无需传入任何选项：`Search` / `Query` 遇下列暂时性故障时在预算内重建底层连接并重试，超出预算明确失败；不保证服务故障期间一定成功。
+
+默认启用意味着：
+- 每次 `Search` / `Query` 自调用开始最多 60 秒（`ReadRecoveryBudget`），即使调用方 ctx 更长或为 `context.Background()`；调用方 ctx 更短时以 ctx 为准。需要更长的单次查询时请关闭恢复。
+- 需要原有的单次执行语义时，显式传 `client.WithReadRecovery(false)` 关闭。选项按传入顺序生效，后者覆盖前者。
+
+```go
+// 默认即启用，observer 可选；只记录固定 Op、错误分类、次数与耗时，不输出错误原文与集合名
+cli, err := client.NewWithOptions(ctx,
+    client.WithAddress("localhost:19530"),
+    client.WithAuth("root", ""),
+    client.WithReadRecoveryObserver(func(ev client.ReadRecoveryEvent) {
+        log.Printf("milvus %s read recovery: attempts=%d elapsed=%s first=%s result=%s",
+            ev.Op, ev.Attempts, ev.Elapsed, classify(ev.FirstErr), classify(ev.Err))
+    }),
+)
+
+// 关闭只读恢复
+cli, err := client.NewWithOptions(ctx,
+    client.WithAddress("localhost:19530"),
+    client.WithReadRecovery(false),
+)
+
+// classify 按 errors.Is 白名单返回固定分类，从不使用错误原文。
+// merr 为 github.com/milvus-io/milvus/pkg/v2/util/merr。Milvus 业务错误码（1/2/503/505 等）
+// 经 status.Code 多为 Unknown，必须用 errors.Is 判断；status.Code 只作传输层兜底。
+func classify(err error) string {
+    switch {
+    case err == nil:
+        return "ok"
+    case errors.Is(err, client.ErrReadRecoveryExhausted):
+        return "recovery_exhausted"
+    case errors.Is(err, client.ErrReadRecoveryDatabaseChanged):
+        return "database_changed"
+    case errors.Is(err, context.DeadlineExceeded):
+        return "deadline"
+    case errors.Is(err, context.Canceled):
+        return "canceled"
+    case errors.Is(err, merr.ErrChannelNotAvailable):
+        return "channel_not_available"
+    case errors.Is(err, merr.ErrChannelTSafeStalled):
+        return "tsafe_stalled"
+    case errors.Is(err, merr.ErrServiceNotReady), errors.Is(err, merr.ErrServiceUnavailable):
+        return "service_not_ready"
+    }
+    switch status.Code(err) {
+    case codes.Unavailable:
+        return "unavailable"
+    case codes.DeadlineExceeded:
+        return "deadline"
+    case codes.Canceled:
+        return "canceled"
+    }
+    return "other"
+}
+```
+
+**适用范围**：仅 `Search`、`Query`。本库从不对写操作（Insert/Delete/Create*/Drop*/Load*/Release* 等）、`UseDatabase` 及其他读方法自动重试。关闭恢复（`WithReadRecovery(false)`）时，`Search` / `Query` 单次执行并原样返回错误，`Close` 等待在途查询自然结束，与引入恢复之前的版本一致。注意：这与 SDK 自身的重试无关——Milvus Go SDK v2.6.5 对所有一元 RPC（含写操作）内置拦截器，遇 gRPC `Unavailable` / `ResourceExhausted` 最多尝试 6 次（退避合计约 22 秒），不受本选项控制。
+
+**可恢复错误**（按 gRPC 状态码 / Milvus 错误码判断，不做字符串匹配）：
+- gRPC `Unavailable`：连接中断或拒绝（SDK 内部已对其短暂重试）；
+- Milvus `ErrServiceNotReady`(1)、`ErrServiceUnavailable`(2)：服务启动中或暂不可用；
+- Milvus `ErrChannelNotAvailable`(503)：重启后查询分发尚未可服务；
+- Milvus `ErrChannelTSafeStalled`(505)：容器 stop/start 后通道 tSafe 滞后。tSafe 由服务端推进，重建连接不保证能修好；持续出现时按预算以 `ErrReadRecoveryExhausted` 明确失败。
+
+其余错误立即原样返回，包括 ctx 取消/超时、认证、权限、参数、集合未加载/不存在、限流、相邻的通道错误码（如 504、506）及其他标记为 retryable 但未列出的错误码，以及文本里带 "503"、"tsafe stalled" 等字样的其他错误。
+
+**流程与预算**：启用时（默认），`Search` / `Query` 自调用开始即受总预算 `ReadRecoveryBudget`（60 秒）约束。预算覆盖首次门禁等待与首次查询，以及之后的全部恢复阶段，并服从调用方更短的 ctx；调用方 ctx 为 `context.Background()` 也不会无限阻塞。首次失败可恢复时，每轮等待 `ReadRecoveryInterval`（5 秒）→ 重建底层 SDK 客户端（握手受同一预算限时）→ 若集合/所查分区处于 Loading 则等待其完成 → 重试查询。服务端完全不可达时，重建拨号（阻塞式）会一直等到连上或预算用尽，而不是每 5 秒重拨。预算到期的处理：
+- 由 ctx 截断引起的错误，以及到期时仍属可恢复的错误，记为 `ErrReadRecoveryExhausted`；
+- 恰在到期时出现的其他真实错误（如权限、集合未加载）原样保留：首次查询原样返回，重试时作为 `Last`；
+- 调用方自身 ctx 先到期时，首次查询按原样返回 ctx/gRPC 错误。
+
+恢复只由 `Search` / `Query` 请求驱动：本库没有后台重连、健康轮询或自动重放。一次调用失败（含预算耗尽、调用方超时/取消）后，本库不再为它拨号、查询或查询加载状态；下一次 `Search` / `Query` 以自己的 ctx 和预算从头执行，若仍遇可恢复错误则重新按上述流程重建。gRPC 对已有连接的内部重连不属于本库的恢复。
+
+恢复后的结果须通过校验：Search 的结果集数等于查询向量数且各结果集无解析错误；Query 的各列行数一致。
+
+**Close**：启用恢复时，`Close` 会先取消进行中的 `Search` / `Query`（包括首次查询）和恢复，再等待已开始的重建结束，然后按原语义拒绝新请求、等待其他在途操作并关闭当前 SDK 客户端。
+- 被 Close 终止的 `Search` / `Query` 视时机返回原样的 `client is closed`，或 `Last` 为它的 `*ReadRecoveryError`（两者都会触发一次 observer）。两种情况下 `err.Error()` 都包含 `client is closed`，请据此判断，不要依赖具体类型。
+- `Close` 返回时，本库创建的 SDK 客户端（包括重建中尚未安装的候选）都已调用过关闭；握手失败的连接也已关闭。服务端感知 TCP 断开是异步的，被终止的查询 goroutine 也可能稍后才返回。
+- 等待重建依赖其 ctx 已被取消、握手与门禁等待及时返回；该重建不持有门禁，不会与 Close 互锁。
+- 关闭恢复（`WithReadRecovery(false)`）时，`Close` 照旧等待在途查询自然结束。
+
+**数据库一致性**：重试只在首次查询所用的库上进行，以下情况都以 `ErrReadRecoveryDatabaseChanged` 停止恢复，绝不改到其他库上查询或查询加载状态：
+- 恢复期间 `UseDatabase` 切换了库：本次重建结果作废，保留调用方的切换。同库的并发等待者共享这一结果，不会各自再建连。
+- 重建时 SDK 实际解析的库与之不同：例如地址 URL 带库（`http://host:19530/urldb`）而当前库被 `UseDatabase("")` 置空，SDK 新建客户端会改用 URL 库。此时放弃新客户端，该客户端在这种状态下无法恢复。
+
+**加载意图**：恢复从不发起 `LoadCollection` / `LoadPartitions` / `Release*`，不会改变副本等加载配置，也不会把调用方已释放的集合重新加载。集合处于 Loading 时只等待；处于 NotLoad 时直接重试查询，由服务端返回真实错误（如 collection not loaded）。
+
+**连接替换**：客户端对象本身保持不变（连接池 `Get`/`MustGet` 返回的对象继续可用）。内部按代际替换底层 SDK 客户端：
+- 同时至多进行一个重建，同库同代上的并发失败共享其结果；
+- 加载状态查询失败时，下一轮重建该查询实际使用的代际；
+- 替换在写门禁下进行，因此经本库发出的旧代在途请求都结束后才关闭旧客户端；
+- 重建继承创建时的全部配置（地址、认证/APIKey、TLS、拨号/keepalive/退避、消息大小、DisableConn），数据库取首次查询所用的库；
+- 内部替换不会调用对外的 `Close`，也不会让客户端进入终态。
+
+**失败与诊断**：恢复仍失败、或首次门禁等待/首次查询被预算/Close 截断时，返回 `*client.ReadRecoveryError`。`Last` 为终止原因：不可恢复错误、调用方 ctx 错误、`client.ErrReadRecoveryExhausted`、`client.ErrReadRecoveryDatabaseChanged`，或 `client is closed`。`First` 为首次失败，只用于诊断（字段与错误文本）。首次即不可恢复、或调用方自身 ctx 先结束时不进入恢复，错误原样返回（不包装）。
+- **判定只依据 `Last`**：`Unwrap` 只返回 `Last`，因此 `errors.Is` / `errors.As` 不会命中首次失败（往往是可恢复错误）。
+- **`status.Code(err)` 映射**：`context.DeadlineExceeded` 与 `ErrReadRecoveryExhausted` 为 `DeadlineExceeded`；`context.Canceled` 为 `Canceled`；`Last` 自带 gRPC 状态时沿用其码；其余为 `Unknown`。
+
+**observer 约定**：仅在启用恢复时生效（`WithReadRecovery(false)` 关闭后设置会被忽略、从不回调）。启用时，`Search` / `Query` 首次查询直接成功不回调；其余每次调用在返回前**恰好回调一次**，覆盖全部最终出口：
+- 首次即不可恢复的错误、调用方自身 ctx 超时/取消（含首次门禁等待中）、Close 开始后被门禁拒绝：错误原样返回，`ev.Err` 与 `ev.FirstErr` 为同一值；
+- 首次门禁等待或首次查询被预算/Close 截断：`ev.Err` 为 `*ReadRecoveryError`；
+- 进入恢复后失败：`ev.Err` 为 `*ReadRecoveryError`；进入恢复后成功：`ev.Err` 为 nil（此时首次失败只能经 `ev.FirstErr` 获得）。
+
+事件字段：
+- `ev.Err` 与返回给调用方的错误是同一个值；`ev.FirstErr` 为首次尝试（含首次门禁等待）的错误，事件中恒非 nil。
+- `ev.Attempts` 为越过门禁（及库校验）后实际执行查询的次数（含首次）。`0` 表示首次门禁等待即失败、未发出查询；计入的执行也不保证请求到达服务端（如 Search 参数在本地构建即失败）；SDK 内部对 `Unavailable` 的重试不计入。`*ReadRecoveryError.Attempts` 同此语义。
+- `ev.Elapsed` 为自调用开始到产生事件的耗时。
+
+其他约定：
+- 回调在查询所在的 goroutine 中同步执行，多个查询可能并发调用它，因此回调必须并发安全、不得阻塞。
+- 回调耗时既不计入预算，也不受调用方 ctx 约束，慢回调会让调用晚于预算/deadline 返回。回调中的 panic 会传到 `Search` / `Query` 的调用方。
+- 本库不在错误与事件中加入认证信息、向量或过滤表达式，但**不对错误与集合名脱敏**：
+  - `FirstErr` / `Err` 是服务端/SDK 的原样错误，文本可能含集合、通道、用户名、服务地址等上下文，不要输出错误原文（包括 `%v` / `err.Error()`）。
+  - `ev.Collection` 是调用方传入的原值，本库不校验也不转义，可能含租户/用户标识或换行等控制字符，默认不要记录。确需区分集合时，由调用方把它映射为自己定义的安全标识（如固定的业务枚举）再记录；仅做转义不等于脱敏。
+  - 默认只记录固定的 `Op`、错误分类、`Attempts`、`Elapsed`。错误分类用 `errors.Is` 白名单（见上方示例 `classify`）：`status.Code` 只反映 gRPC 状态，Milvus 业务错误（如 merr 1/2/503/505）多为 `Unknown`，无法据此精确分类，只能作传输层兜底。
+- 本库自身不输出日志。
+
+**`GetClient()` 边界**：裸 SDK 句柄不参与恢复，本库不承诺它透明恢复：恢复只替换本库内部持有的 SDK 客户端，调用方先前取得的裸句柄会被关闭而不会自动更新。本库也不为它提供任何恢复相关的并发安全保证。恢复默认启用，任何并发的 `Search` / `Query` 都可能触发重建，在裸句柄调用途中把它关闭。SDK 的 `Close` 会无锁清空内部连接字段，因此这种并发不只是调用失败，而是数据竞争。重新调用 `GetClient()` 只能避开已经完成的替换，无法保护随后仍在进行的调用。因此在默认配置下，二选一：
+- 需要裸 SDK 能力时，另建一个以 `WithReadRecovery(false)` 关闭恢复的独立客户端；
+- 或由调用方确保使用裸句柄期间没有并发的 `Search` / `Query` / `Close` / `UseDatabase`，且不长期缓存裸句柄。
+
+关闭恢复时，裸句柄的生命周期与引入恢复之前一致。
+
+**限制**：重建需要获取写门禁，因此会等待经本库的在途请求，包括仍在 SDK 内部对 `Unavailable` 做重试的请求（最长约 22 秒）。这段时间内新请求排队，仍受各自 ctx 与预算约束。
 
 ## 资源管理
 
